@@ -110,9 +110,13 @@ heading in your body frame (`rel_x`, `rel_y`, `rel_yaw`), `race_pos`,
 
 The physics is in `src/core/car.cpp`; the numbers a strategy needs are:
 
-- **Fuel** burns in proportion to engine work: about 3.1 l per lap of the
-  circuit at racing speed, so the 60 l tank lasts about 19 laps. A full tank
-  adds 45 kg, which costs about 0.3 s a lap. `--fuel-rate X` scales consumption.
+- **The car** is modelled on a 2004-2010 F1 car: 605 kg with the driver, a
+  19,000 rpm V10 of about 660 kW, 7 gears, roughly 2.5x its weight in downforce
+  at 300 km/h. A good lap of the circuit is about 53 s, ~305 km/h at the end of
+  the straight, ~4.4 g in fast corners.
+- **Fuel** burns in proportion to engine work: about 2.3 l per lap of the
+  circuit at racing speed, so the 58 l tank lasts about 25 laps. A full tank
+  adds 44 kg. `--fuel-rate X` scales consumption.
 - **Tyres** wear in proportion to sliding work (cornering, braking, wheelspin).
   A medium loses about 0.03 per lap of the circuit. Grip falls 7% from new to
   wear 0.7, then off a cliff (-0.8 per unit of wear beyond 0.7).

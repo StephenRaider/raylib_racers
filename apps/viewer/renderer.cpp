@@ -1,5 +1,7 @@
 #include "renderer.hpp"
 
+#include "liveries.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -225,19 +227,15 @@ Matrix boxTransform(Vector3 center, Vector3 size, float yaw) {
 
 }  // namespace
 
-// One colour per livery, in CarModel's livery order: rosso, blue_pink, papaya, racing_green, midnight,
-// silver_teal, white_navy. Dark liveries use a lighter shade so they read on the HUD.
+// A car's colour on the HUD, minimap, pit box and debug lines: its team's.
 Color teamColor(int i) {
-    static const Color c[] = {{220, 35, 35, 255},  {20, 100, 215, 255}, {255, 128, 0, 255},  {0, 135, 95, 255},
-                              {45, 60, 140, 255},  {0, 205, 185, 255},  {235, 235, 240, 255}};
-    return c[i % 7];
+    const auto& t = liveryTable();
+    if (!t.empty()) return t[carLivery(i)].color;
+    static const Color c[] = {{220, 35, 35, 255}, {20, 100, 215, 255}, {255, 128, 0, 255}, {0, 135, 95, 255}};
+    return c[i % 4];
 }
 
-Color teamAccent(int i) {
-    static const Color c[] = {{245, 245, 245, 255}, {255, 90, 170, 255}, {40, 150, 230, 255}, {200, 245, 0, 255},
-                              {220, 25, 45, 255},   {20, 20, 22, 255},   {10, 40, 110, 255}};
-    return c[i % 7];
-}
+Color teamAccent(int i) { return i % 2 ? Color{30, 30, 35, 255} : Color{245, 245, 245, 255}; }
 
 // ---------------------------------------------------------------- setup
 
@@ -769,7 +767,7 @@ void Renderer::drawCar(const rr::Car& car, int index) {
     pose.steer = st.steerAngle;
     // the sim rolls a car.phys.wheelRadius wheel; scale so the model's tyres do not skid
     pose.wheelRot = st.wheelRot * car.phys.wheelRadius / carModel_.wheelRadius();
-    pose.livery = index;
+    pose.livery = carLivery(index);
     float spec = 0.55f;
     if (current_ == &lit_) SetShaderValue(lit_, locSpec_, &spec, SHADER_UNIFORM_FLOAT);
     carModel_.draw(pose, *current_);

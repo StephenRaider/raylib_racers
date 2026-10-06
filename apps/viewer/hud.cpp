@@ -1,5 +1,7 @@
 #include "hud.hpp"
 
+#include "liveries.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -75,15 +77,20 @@ void Hud::panel(Rectangle r, float alpha) {
 
 void Hud::draw(const rr::Race& race, const HudState& st) {
     if (st.showHud) {
-        drawTower(race, st);
+        if (st.qualifying) drawQualiTower(race, st);
+        else drawTower(race, st);
         drawMinimap(race, st);
         drawCarPanel(race, st);
         const char* hint = "F1 help   Tab next car   L follow leader   C camera   M sound   Space pause   +/- speed   Esc menu";
         text(hint, 18, GetScreenHeight() - 30.0f, 16, Fade(kText, 0.75f));
         // camera and focus mode, top centre
         char buf[96];
-        std::snprintf(buf, sizeof buf, "%s CAM   %s%s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED",
-                      st.muted ? "   SOUND OFF" : "");
+        if (st.qualifying)
+            std::snprintf(buf, sizeof buf, "QUALIFYING  RUN %d / %d   %s CAM   Enter: skip run   Shift+Enter: skip qualifying%s",
+                          st.qualiRun, st.qualiRuns, camName(st.camera), st.muted ? "   SOUND OFF" : "");
+        else
+            std::snprintf(buf, sizeof buf, "%s CAM   %s%s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED",
+                          st.muted ? "   SOUND OFF" : "");
         float w = width(buf, 15, true) + 28;
         float x = (GetScreenWidth() - w) / 2;
         panel({x, 12, w, 30});
@@ -134,7 +141,12 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
         std::snprintf(buf, sizeof buf, "%zu", p + 1);
         textRight(buf, x + 38, y, 19, kText, true);
         DrawRectangle((int)x + 46, (int)y + 1, 5, 19, teamColor(idx));
-        text(c.name.c_str(), x + 60, y, 19, kText);
+        {  // shrink long names to fit before the tyre column
+            const float room = w - 112 - 12 - 60;
+            float size = 19;
+            while (size > 13 && width(c.name.c_str(), size) > room) size -= 1;
+            text(c.name.c_str(), x + 60, y + (19 - size) * 0.5f, size, kText);
+        }
         std::string gap;
         if (p == 0) gap = c.finished ? "FINISH" : "LEADER";
         else if (c.dnf) gap = "DNF";
@@ -204,7 +216,9 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
 
     DrawRectangle((int)x + 14, (int)y + 16, 5, 40, teamColor(st.focus));
     text(c.name.c_str(), x + 28, y + 12, 22, kText, true);
-    std::snprintf(buf, sizeof buf, "%s%s%s", c.robotName.c_str(), c.params.empty() ? "" : "  ", c.params.c_str());
+    const auto& lt = liveryTable();
+    const std::string team = lt.empty() ? std::string() : lt[carLivery(st.focus)].team + "   ";
+    std::snprintf(buf, sizeof buf, "%s%s%s%s", team.c_str(), c.robotName.c_str(), c.params.empty() ? "" : "  ", c.params.c_str());
     text(buf, x + 28, y + 38, 15, kDim);
     std::snprintf(buf, sizeof buf, "P%d", c.position);
     textRight(buf, x + w - 16, y + 12, 30, kAccent, true);
@@ -338,6 +352,10 @@ void Hud::drawResults(const rr::Race& race) {
 
 void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
     hits.clear();
+    if (m.gridPage) {
+        drawGridPage(m, hits);
+        return;
+    }
     const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.35f));
     const float w = 720, rowH = 64, h = 150 + MenuState::kRows * rowH + 50;
@@ -353,7 +371,7 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
         const bool sel = row == m.row;
         const Rectangle r = {x + 20, ry, w - 40, rowH - 8};
         hits.push_back({r.x, r.y, r.width, r.height, row, 0});
-        if (row == 4) {  // start button
+        if (row == MenuState::kStartRow) {
             Rectangle b = {x + 20, ry + 6, w - 40, rowH - 4};
             hits.back() = {b.x, b.y, b.width, b.height, row, 0};
             DrawRectangleRounded(b, 0.25f, 8, sel ? kAccent : Fade(kAccent, 0.75f));
@@ -362,7 +380,8 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
             continue;
         }
         if (sel) DrawRectangleRounded(r, 0.2f, 8, Fade(WHITE, 0.08f));
-        const char* label = row == 0 ? "Track" : row == 1 ? "Race length" : row == 2 ? "Tyre life" : "Cars";
+        static const char* labels[] = {"Track", "Race length", "Tyre life", "Cars", "Session", "Grid"};
+        const char* label = labels[row];
         note[0] = 0;
         switch (row) {
             case 0:
@@ -392,9 +411,18 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
                 }
                 break;
             }
-            default:
+            case 3:
                 std::snprintf(val, sizeof val, "%d", m.cars);
-                std::snprintf(note, sizeof note, "one livery each");
+                std::snprintf(note, sizeof note, "%d teams of two", (m.liveryCount + 1) / 2);
+                break;
+            case MenuState::kSessionRow:
+                std::snprintf(val, sizeof val, "%s", m.weekend ? "Weekend" : "Race only");
+                std::snprintf(note, sizeof note, "%s", m.weekend ? "qualifying sets the grid: each car runs alone, fastest lap wins pole"
+                                                                 : "grid in the order of the Grid page");
+                break;
+            default:
+                std::snprintf(val, sizeof val, "Edit");
+                std::snprintf(note, sizeof note, "choose each car's livery and driving algorithm");
                 break;
         }
         text(label, r.x + 16, r.y + 8, 21, sel ? kText : kDim, true);
@@ -411,4 +439,126 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
     }
     const char* help = "Up/Down choose    Left/Right change (Shift: bigger steps)    Enter start    Esc quit";
     text(help, x + (w - width(help, 15)) / 2, y + h - 34, 15, kDim);
+}
+
+void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
+    const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.45f));
+    const int n = m.cars;
+    const int perCol = n > 10 ? (n + 1) / 2 : n;
+    const int cols = n > 10 ? 2 : 1;
+    const float colW = 620, rowH = 34;
+    const float w = cols * colW + 40, h = 130 + perCol * rowH + 70;
+    const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
+    panel({x, y, w, h}, 0.9f);
+    text("RACE SETUP", x + 28, y + 22, 18, kAccent, true);
+    text("Grid", x + 28, y + 44, 32, kText, true);
+    text("Livery", x + 28 + 52, y + 98, 14, kDim, true);
+    text("Algorithm", x + 28 + 360, y + 98, 14, kDim, true);
+    if (cols == 2) {
+        text("Livery", x + 28 + colW + 52, y + 98, 14, kDim, true);
+        text("Algorithm", x + 28 + colW + 360, y + 98, 14, kDim, true);
+    }
+    const auto& table = liveryTable();
+    char buf[128];
+    for (int car = 0; car < n; ++car) {
+        const float cx = x + 20 + (car / perCol) * colW, cy = y + 120 + (car % perCol) * rowH;
+        const bool selRow = car == m.gridRow;
+        if (selRow) DrawRectangleRounded({cx, cy - 3, colW - 20, rowH - 2}, 0.3f, 6, Fade(WHITE, 0.08f));
+        std::snprintf(buf, sizeof buf, "%d", car + 1);
+        textRight(buf, cx + 30, cy + 3, 17, kDim, true);
+        // livery: team colour chip, team and number
+        const int slot = car < (int)m.carLivery.size() ? m.carLivery[car] : car;
+        const bool haveTable = slot >= 0 && slot < (int)table.size();
+        DrawRectangle((int)cx + 58, (int)cy + 3, 6, 20, haveTable ? table[slot].color : GRAY);
+        if (haveTable) std::snprintf(buf, sizeof buf, "#%d  %s", table[slot].number, table[slot].team.c_str());
+        else std::snprintf(buf, sizeof buf, "livery %d", slot + 1);
+        const bool selL = selRow && m.gridCol == 0, selA = selRow && m.gridCol == 1;
+        text("<", cx + 40, cy + 1, 20, selL ? kAccent : kDim, true);
+        text(buf, cx + 72, cy + 3, 17, selL ? kText : Fade(kText, 0.85f), selL);
+        text(">", cx + 316, cy + 1, 20, selL ? kAccent : kDim, true);
+        hits.push_back({cx + 34, cy - 3, 26, rowH, 100 + car * 2, -1});
+        hits.push_back({cx + 60, cy - 3, 250, rowH, 100 + car * 2, 0});
+        hits.push_back({cx + 308, cy - 3, 26, rowH, 100 + car * 2, 1});
+        // algorithm
+        const int a = car < (int)m.carAlgo.size() ? m.carAlgo[car] : 0;
+        const char* label = a < (int)m.algos.size() ? m.algos[a].label.c_str() : "?";
+        text("<", cx + 346, cy + 1, 20, selA ? kAccent : kDim, true);
+        text(label, cx + 370, cy + 3, 17, selA ? kText : Fade(kText, 0.85f), selA);
+        text(">", cx + 580, cy + 1, 20, selA ? kAccent : kDim, true);
+        hits.push_back({cx + 340, cy - 3, 26, rowH, 100 + car * 2 + 1, -1});
+        hits.push_back({cx + 366, cy - 3, 206, rowH, 100 + car * 2 + 1, 0});
+        hits.push_back({cx + 572, cy - 3, 26, rowH, 100 + car * 2 + 1, 1});
+    }
+    // Done button
+    Rectangle b = {x + w - 180, y + h - 58, 150, 40};
+    DrawRectangleRounded(b, 0.25f, 8, kAccent);
+    text("DONE", b.x + (b.width - width("DONE", 20, true)) / 2, b.y + 9, 20, Color{20, 20, 24, 255}, true);
+    hits.push_back({b.x, b.y, b.width, b.height, 99, 0});
+    const char* help = "Up/Down car    Tab livery / algorithm    Left/Right change (a livery in use swaps)    Enter done";
+    text(help, x + 28, y + h - 46, 15, kDim);
+}
+
+void Hud::drawQualiTower(const rr::Race& race, const HudState& st) {
+    const float x = 16, w = 340, rowH = 28;
+    const float h = 104 + rowH * st.quali.size() + 8;
+    panel({x, 16, w, h});
+    text("QUALIFYING", x + 16, 26, 15, kAccent, true);
+    text(race.track().name().c_str(), x + 16, 46, 19, kText);
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "RUN %d / %d", st.qualiRun, st.qualiRuns);
+    text(buf, x + 16, 72, 26, kText, true);
+    const rr::Car& c = race.cars()[0];
+    std::snprintf(buf, sizeof buf, "LAP %d / %d", c.currentLap(race.laps()), race.laps());
+    textRight(buf, x + w - 16, 78, 17, kDim, false, true);
+    float y = 112;
+    const float pole = st.quali.empty() ? 0 : st.quali[0].time;
+    for (size_t p = 0; p < st.quali.size(); ++p, y += rowH) {
+        const QualiLine& q = st.quali[p];
+        if (q.running) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(WHITE, 0.12f));
+        std::snprintf(buf, sizeof buf, "%zu", p + 1);
+        textRight(buf, x + 38, y, 19, q.time > 0 ? kText : kDim, true);
+        DrawRectangle((int)x + 46, (int)y + 1, 5, 19, q.color);
+        float size = 19;
+        while (size > 13 && width(q.name.c_str(), size) > w - 60 - 100) size -= 1;
+        text(q.name.c_str(), x + 60, y + (19 - size) * 0.5f, size, q.time > 0 || q.running ? kText : kDim);
+        std::string t;
+        if (q.running) t = "ON TRACK";
+        else if (q.time <= 0) t = "-";
+        else if (p == 0) t = lapTime(q.time);
+        else {
+            std::snprintf(buf, sizeof buf, "+%.3f", q.time - pole);
+            t = buf;
+        }
+        textRight(t.c_str(), x + w - 16, y + 1, 17, q.running ? kAccent : kDim, false, true);
+    }
+}
+
+void Hud::drawQualiResults(const HudState& st) {
+    const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.45f));
+    const int n = (int)st.quali.size();
+    const int perCol = n > 10 ? (n + 1) / 2 : n, cols = n > 10 ? 2 : 1;
+    const float colW = 460, rowH = 32;
+    const float w = cols * colW + 40, h = 120 + perCol * rowH + 70;
+    const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
+    panel({x, y, w, h}, 0.9f);
+    text("QUALIFYING", x + 28, y + 22, 18, kAccent, true);
+    text("Starting grid", x + 28, y + 44, 32, kText, true);
+    char buf[96];
+    const float pole = n ? st.quali[0].time : 0;
+    for (int p = 0; p < n; ++p) {
+        const QualiLine& q = st.quali[p];
+        const float cx = x + 20 + (p / perCol) * colW, cy = y + 104 + (p % perCol) * rowH;
+        std::snprintf(buf, sizeof buf, "%d", p + 1);
+        textRight(buf, cx + 30, cy, 19, kText, true);
+        DrawRectangle((int)cx + 40, (int)cy + 1, 5, 19, q.color);
+        text(q.name.c_str(), cx + 54, cy, 18, kText);
+        if (q.time <= 0) std::snprintf(buf, sizeof buf, "no time");
+        else if (p == 0) std::snprintf(buf, sizeof buf, "%s", lapTime(q.time).c_str());
+        else std::snprintf(buf, sizeof buf, "+%.3f", q.time - pole);
+        textRight(buf, cx + colW - 40, cy + 1, 17, p == 0 ? kAccent : kDim, false, true);
+    }
+    const char* go = "Enter: start the race    Esc: back to setup";
+    text(go, x + (w - width(go, 18, true)) / 2, y + h - 46, 18, kAccent, true);
 }

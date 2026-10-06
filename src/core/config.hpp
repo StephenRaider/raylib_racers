@@ -22,6 +22,7 @@ struct RaceConfig {
     float maxTime = 0;         // 0 = automatic
     float fuelRate = 1.0f;     // fuel consumption multiplier
     float wearRate = 1.0f;     // tyre wear multiplier
+    float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     std::string jsonOut;
     std::string telemetryDir;
     bool quiet = false;

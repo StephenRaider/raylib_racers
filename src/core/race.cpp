@@ -104,6 +104,7 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
             return false;
         }
         c.robotCfg.initial_fuel = clampf(c.robotCfg.initial_fuel, 0.0f, c.phys.fuelCapacity);
+        if (cfg.fuelLimit > 0) c.robotCfg.initial_fuel = std::min(c.robotCfg.initial_fuel, cfg.fuelLimit);
         if (c.robotCfg.tire_compound < RR_TIRE_SOFT || c.robotCfg.tire_compound > RR_TIRE_HARD)
             c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
     }

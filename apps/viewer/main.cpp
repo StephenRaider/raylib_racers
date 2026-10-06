@@ -8,6 +8,7 @@
 
 #include "engine_sound.hpp"
 #include "hud.hpp"
+#include "liveries.hpp"
 #include "menu.hpp"
 #include "race_audio.hpp"
 #include "race.hpp"
@@ -34,6 +35,34 @@ std::unique_ptr<rr::Race> makeRace(const rr::RaceConfig& cfg, const Paths& paths
         return nullptr;
     }
     return race;
+}
+
+// Algorithms the grid page offers: the example robots with a few settings, then any
+// other robot library found in the bot folders (your own robots show up here).
+std::vector<Algorithm> listAlgorithms(const Paths& paths) {
+    std::vector<Algorithm> algos = {
+        {"racingline", "racingline", ""},
+        {"gapfollow", "gapfollow", ""},
+        {"racingline safe", "racingline", "grip=0.75"},
+        {"gapfollow safe", "gapfollow", "speed=0.85"},
+        {"racingline steady", "racingline", "grip=0.7,brake=0.6"},
+        {"gapfollow steady", "gapfollow", "speed=0.8"},
+        {"simple", "simple", ""},
+    };
+    std::set<std::string> found;
+    for (const std::string& dir : paths.bots) {
+        std::error_code ec;
+        for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+            const std::string ext = e.path().extension().string();
+            if (ext == ".so" || ext == ".dll" || ext == ".dylib") found.insert(e.path().stem().string());
+        }
+    }
+    for (const std::string& name : found) {
+        bool known = false;
+        for (const Algorithm& a : algos) known = known || a.robot == name;
+        if (!known) algos.push_back({name, name, ""});
+    }
+    return algos;
 }
 
 // Every *.trk in the track folders, by file name.
@@ -134,16 +163,7 @@ int main(int argc, char** argv) {
         std::printf("%s", rr::usage(argv[0], true).c_str());
         return 0;
     }
-    // Default grid: one car per livery.
-    if (cfg.entries.empty())
-        cfg.entries = {{"racingline", "", ""},
-                       {"gapfollow", "", ""},
-                       {"simple", "", ""},
-                       {"racingline", "grip=0.75", "racingline (safe)"},
-                       {"gapfollow", "speed=0.85", "gapfollow (safe)"},
-                       {"racingline", "grip=0.7,brake=0.6", "racingline (steady)"},
-                       {"gapfollow", "speed=0.8", "gapfollow (steady)"}};
-    const std::vector<rr::EntrySpec> allEntries = cfg.entries;
+    const std::vector<rr::EntrySpec> cliEntries = cfg.entries;
 
     const std::string dir = rr::exeDir(argv[0]);
     Paths paths;
@@ -152,6 +172,51 @@ int main(int argc, char** argv) {
     for (const std::string& a : {dir + "/assets", std::string(RR_SOURCE_DIR "/assets"), std::string("assets")})
         if (std::filesystem::exists(a + "/fonts")) { paths.assets = a; break; }
 
+    setLiveryTable(loadLiveries(paths.assets));
+    const int liveryCount = std::max(1, (int)liveryTable().size());
+
+    // The grid: one livery slot and algorithm per car. Without --car, a full field over all the teams.
+    MenuState menu;
+    menu.algos = listAlgorithms(paths);
+    menu.liveryCount = liveryCount;
+    if (cliEntries.empty()) {
+        const int n = liveryTable().empty() ? 7 : liveryCount;
+        for (int i = 0; i < n; ++i) menu.carAlgo.push_back(i % 6);  // the six racing presets, not "simple"
+    } else {
+        for (const rr::EntrySpec& e : cliEntries) {
+            int found = -1;
+            for (int a = 0; a < (int)menu.algos.size(); ++a)
+                if (menu.algos[a].robot == e.robot && menu.algos[a].params == e.params) found = a;
+            if (found < 0) {
+                menu.algos.push_back({e.name.empty() ? e.robot : e.name, e.robot, e.params});
+                found = (int)menu.algos.size() - 1;
+            }
+            menu.carAlgo.push_back(found);
+        }
+    }
+    menu.maxCars = (int)menu.carAlgo.size();
+    while ((int)menu.carAlgo.size() < liveryCount) menu.carAlgo.push_back((int)menu.carAlgo.size() % 6);
+    menu.maxCars = std::max(menu.maxCars, liveryCount);
+    for (int i = 0; i < menu.maxCars; ++i) menu.carLivery.push_back(i % liveryCount);
+    menu.cars = cliEntries.empty() ? (int)std::min<size_t>(menu.maxCars, liveryTable().empty() ? 7 : liveryCount)
+                                   : (int)cliEntries.size();
+    // Entries for the first `cars` cars of the grid; names carry the race number.
+    auto gridEntries = [&]() {
+        std::vector<rr::EntrySpec> entries;
+        std::vector<int> slots;
+        for (int i = 0; i < menu.cars; ++i) {
+            const Algorithm& a = menu.algos[menu.carAlgo[i]];
+            const int slot = menu.carLivery[i];
+            std::string name = a.label;
+            if (!liveryTable().empty()) name = std::to_string(liveryTable()[slot].number) + " " + name;
+            entries.push_back({a.robot, a.params, name});
+            slots.push_back(slot);
+        }
+        setCarLiveries(slots);
+        return entries;
+    };
+    cfg.entries = gridEntries();
+
     if (!cfg.soundTest.empty()) return runSoundTest(cfg, paths);
 
     const bool shotMode = !cfg.screenshot.empty();
@@ -159,7 +224,6 @@ int main(int argc, char** argv) {
     bool inMenu = !cfg.noMenu && (!shotMode || cfg.screenshotAt < 0);
 
     // Menu: tracks, with the one asked for first selected, and the command line as defaults.
-    MenuState menu;
     for (const std::string& t : listTracks(paths)) {
         TrackStats ts;
         ts.file = ts.title = t;
@@ -173,8 +237,6 @@ int main(int argc, char** argv) {
         menu.track = 0;
     }
     menu.laps = cfg.laps == 3 ? 10 : cfg.laps;  // 3 is the headless default; a race to watch is longer
-    menu.maxCars = (int)allEntries.size();
-    menu.cars = menu.maxCars;
     menu.tankLitres = rr::CarParams{}.fuelCapacity;
     auto ensureStats = [&]() {
         TrackStats& ts = menu.tracks[menu.track];
@@ -244,7 +306,7 @@ int main(int argc, char** argv) {
         cfg.track = ts.file;
         cfg.laps = menu.laps;
         cfg.wearRate = menu.wearRate();
-        cfg.entries.assign(allEntries.begin(), allEntries.begin() + menu.cars);
+        cfg.entries = gridEntries();
         auto fresh = makeRace(cfg, paths);
         if (!fresh) return false;
         race = std::move(fresh);
@@ -257,6 +319,89 @@ int main(int argc, char** argv) {
         return true;
     };
     if (inMenu) applyMenu();
+
+    // ---- weekend: qualifying runs one car at a time, then the race starts in that order
+    enum class Phase { Race, Quali, QualiDone } phase = Phase::Race;
+    std::vector<rr::EntrySpec> weekendEntries;
+    std::vector<float> qualiTime;
+    int qualiCar = 0;
+    auto qualiConfig = [&](int k) {
+        rr::RaceConfig q = cfg;
+        q.entries = {weekendEntries[k]};
+        q.laps = 3;  // out lap and two flying laps
+        q.fuelLimit = menu.stats().fuelPerLap * 3.6f;
+        return q;
+    };
+    auto refreshQualiLines = [&]() {
+        std::vector<int> idx(weekendEntries.size());
+        for (int i = 0; i < (int)idx.size(); ++i) idx[i] = i;
+        std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) {
+            const bool ta = qualiTime[a] > 0, tb = qualiTime[b] > 0;
+            if (ta != tb) return ta;
+            return ta && qualiTime[a] < qualiTime[b];
+        });
+        st.quali.clear();
+        for (int i : idx) {
+            QualiLine l;
+            l.name = weekendEntries[i].name;
+            l.color = liveryTable().empty() ? teamColor(i) : liveryTable()[menu.carLivery[i]].color;
+            l.time = qualiTime[i];
+            l.running = phase == Phase::Quali && i == qualiCar;
+            st.quali.push_back(l);
+        }
+        st.qualiRun = qualiCar + 1;
+        st.qualiRuns = (int)weekendEntries.size();
+        return idx;
+    };
+    auto startQualiRun = [&](int k) -> bool {
+        qualiCar = k;
+        setCarLiveries({menu.carLivery[k]});
+        auto fresh = makeRace(qualiConfig(k), paths);
+        if (!fresh) return false;
+        race = std::move(fresh);
+        simDebt = 0;
+        st.focus = 0;
+        st.qualifying = true;
+        refreshQualiLines();
+        return true;
+    };
+    // Ends the current run (simulating whatever is left of it), and with `all` the remaining runs too.
+    auto finishQuali = [&](bool all) {
+        while (!race->isOver()) race->step();
+        qualiTime[qualiCar] = race->cars()[0].bestLap;
+        while (all && qualiCar + 1 < (int)weekendEntries.size()) {
+            ++qualiCar;
+            auto run = makeRace(qualiConfig(qualiCar), paths);
+            if (!run) break;
+            while (!run->isOver()) run->step();
+            qualiTime[qualiCar] = run->cars()[0].bestLap;
+        }
+        if (qualiCar + 1 < (int)weekendEntries.size()) {
+            startQualiRun(qualiCar + 1);
+        } else {
+            phase = Phase::QualiDone;
+            st.qualifying = false;
+            refreshQualiLines();
+        }
+    };
+    auto startWeekendRace = [&]() -> bool {
+        std::vector<int> order = refreshQualiLines();
+        cfg.entries.clear();
+        std::vector<int> slots;
+        for (int i : order) {
+            cfg.entries.push_back(weekendEntries[i]);
+            slots.push_back(menu.carLivery[i]);
+        }
+        setCarLiveries(slots);
+        auto fresh = makeRace(cfg, paths);
+        if (!fresh) return false;
+        race = std::move(fresh);
+        simDebt = 0;
+        phase = Phase::Race;
+        st.qualifying = false;
+        st.followLeader = true;
+        return true;
+    };
 
     bool quit = false;
     while (!WindowShouldClose() && !quit) {
@@ -275,6 +420,12 @@ int main(int argc, char** argv) {
                 if (!applyMenu()) quit = true;
                 inMenu = false;
                 st.paused = false;
+                if (menu.weekend && !quit) {
+                    phase = Phase::Quali;
+                    weekendEntries = cfg.entries;
+                    qualiTime.assign(weekendEntries.size(), 0.0f);
+                    if (!startQualiRun(0)) quit = true;
+                }
             }
             renderer->updateCamera(*race, race->order()[0], CAM_CINEMATIC, frameDt);
         } else {
@@ -297,11 +448,16 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_M)) st.muted = !st.muted;
             if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
             if (IsKeyPressed(KEY_F1)) st.showHelp = !st.showHelp;
+            const bool enter = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
+            if (phase == Phase::Quali && enter) finishQuali(shift);
+            else if (phase == Phase::QualiDone && enter && !startWeekendRace()) quit = true;
             if (IsKeyPressed(KEY_ESCAPE) && !shotMode) {
                 inMenu = true;
+                phase = Phase::Race;
+                st.qualifying = false;
                 applyMenu();  // back to the grid
             }
-            if (IsKeyPressed(KEY_R)) {
+            if (IsKeyPressed(KEY_R) && phase == Phase::Race) {
                 auto fresh = makeRace(cfg, paths);
                 if (fresh) {
                     race = std::move(fresh);
@@ -322,7 +478,9 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (st.followLeader) st.focus = race->order()[0];
+            if (phase == Phase::Quali && race->isOver()) finishQuali(false);
+            if (phase != Phase::Race) st.focus = 0;
+            else if (st.followLeader) st.focus = race->order()[0];
             renderer->updateCamera(*race, st.focus, st.camera, shotMode ? 1.0f / 60 : frameDt);
         }
         // engine sound only while racing at (close to) real time
@@ -333,6 +491,7 @@ int main(int argc, char** argv) {
         ClearBackground(BLACK);
         renderer->draw(*race, inMenu ? race->order()[0] : st.focus, st.view);
         if (inMenu) hud->drawMenu(menu, menuHits);
+        else if (phase == Phase::QualiDone) hud->drawQualiResults(st);
         else hud->draw(*race, st);
         if (shotMode && ++shotFrames == 3) {
             rlDrawRenderBatchActive();

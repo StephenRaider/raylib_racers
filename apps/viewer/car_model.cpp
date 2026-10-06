@@ -1,5 +1,7 @@
 #include "car_model.hpp"
 
+#include "liveries.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -9,9 +11,6 @@
 #include "rlgl.h"
 
 namespace {
-
-// Team order: index i uses kLiveries[i % 7]; teamColor() in renderer.cpp matches it.
-const char* kLiveries[] = {"rosso", "blue_pink", "papaya", "racing_green", "midnight", "silver_teal", "white_navy"};
 
 std::string readFile(const std::string& path) {
     std::string s;
@@ -78,18 +77,7 @@ bool CarModel::load(const std::string& assetsDir, std::string* err) {
     // raylib drops glTF material names; the livery is the material with the 2048-wide texture.
     for (int i = 0; i < body_.materialCount; ++i)
         if (body_.materials[i].maps[MATERIAL_MAP_DIFFUSE].texture.width == 2048) liveryMaterial_ = i;
-    if (liveryMaterial_ >= 0) {
-        defaultLivery_ = body_.materials[liveryMaterial_].maps[MATERIAL_MAP_DIFFUSE].texture;
-        for (const char* name : kLiveries) {
-            std::string path = dir + "/liveries/" + name + ".png";
-            if (!std::filesystem::exists(path)) continue;
-            Texture2D t = LoadTexture(path.c_str());
-            if (t.id == 0) continue;
-            GenTextureMipmaps(&t);
-            SetTextureFilter(t, TEXTURE_FILTER_TRILINEAR);
-            liveries_.push_back(t);
-        }
-    }
+    if (liveryMaterial_ >= 0) defaultLivery_ = body_.materials[liveryMaterial_].maps[MATERIAL_MAP_DIFFUSE].texture;
     for (Model* m : {&body_, &wheelFront_, &wheelRear_})
         for (int i = 0; i < m->materialCount; ++i) {
             Texture2D& t = m->materials[i].maps[MATERIAL_MAP_DIFFUSE].texture;
@@ -111,10 +99,31 @@ void CarModel::unload() {
         UnloadModel(*m);
         *m = Model{};
     }
-    for (Texture2D& t : liveries_) UnloadTexture(t);
+    for (auto& kv : liveries_)
+        if (kv.second.id) UnloadTexture(kv.second);
     liveries_.clear();
     liveryMaterial_ = -1;
     loaded_ = false;
+}
+
+Texture2D CarModel::livery(int slot) {
+    auto it = liveries_.find(slot);
+    if (it != liveries_.end()) return it->second.id ? it->second : defaultLivery_;
+    // Loaded on first use, at 1024x1024: twenty full-size liveries would take ~450 MB of video memory.
+    Texture2D t{};
+    const auto& table = liveryTable();
+    if (slot >= 0 && slot < (int)table.size()) {
+        Image img = LoadImage(table[slot].file.c_str());
+        if (img.data) {
+            if (img.width > 1024) ImageResize(&img, 1024, 1024 * img.height / img.width);
+            t = LoadTextureFromImage(img);
+            UnloadImage(img);
+            GenTextureMipmaps(&t);
+            SetTextureFilter(t, TEXTURE_FILTER_TRILINEAR);
+        }
+    }
+    liveries_[slot] = t;
+    return t.id ? t : defaultLivery_;
 }
 
 void CarModel::drawPart(Model& m, Matrix transform, Shader shader) {
@@ -129,9 +138,8 @@ void CarModel::draw(const Pose& pose, Shader shader) {
     const Matrix toSim = MatrixMultiply(MatrixRotateY(PI / 2), MatrixTranslate(pose.centreOffset, 0, 0));
     const Matrix base = MatrixMultiply(toSim, pose.world);
 
-    if (liveryMaterial_ >= 0 && !liveries_.empty())
-        body_.materials[liveryMaterial_].maps[MATERIAL_MAP_DIFFUSE].texture =
-            liveries_[((pose.livery % (int)liveries_.size()) + (int)liveries_.size()) % (int)liveries_.size()];
+    if (liveryMaterial_ >= 0)
+        body_.materials[liveryMaterial_].maps[MATERIAL_MAP_DIFFUSE].texture = livery(pose.livery);
     drawPart(body_, base, shader);
 
     for (const Hub& h : hubs_) {
