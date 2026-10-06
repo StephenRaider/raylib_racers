@@ -1,6 +1,6 @@
 build/
 build-*/
+# race outputs (--json, --telemetry) written next to where you run
 *.csv
-*.json
+/*.json
 !*.trk
-!assets/**/*.json
