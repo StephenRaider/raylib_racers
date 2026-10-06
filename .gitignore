@@ -3,3 +3,4 @@ build-*/
 *.csv
 *.json
 !*.trk
+!assets/**/*.json

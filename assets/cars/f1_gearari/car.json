@@ -1,0 +1,121 @@
+{
+  "id": "f1_gearari",
+  "source": "Gearari-FBX.fbx",
+  "scale": 1.7,
+  "convention": "metres; +Y up; +Z forward (nose); +X = car's left; origin on the ground at the centre of the wheelbase",
+  "dimensions": {
+    "length": 4.596,
+    "width": 1.651,
+    "height": 1.09,
+    "wheelbase": 3.019
+  },
+  "wheels": {
+    "RR": {
+      "hub": [
+        -0.7737,
+        0.3599,
+        -1.5097
+      ],
+      "radius": 0.3599,
+      "width": 0.4697,
+      "file": "wheel_rear.glb",
+      "mirrored": true
+    },
+    "FR": {
+      "hub": [
+        -0.7815,
+        0.3599,
+        1.5097
+      ],
+      "radius": 0.3599,
+      "width": 0.4305,
+      "file": "wheel_front.glb",
+      "mirrored": true
+    },
+    "RL": {
+      "hub": [
+        0.7737,
+        0.3599,
+        -1.5097
+      ],
+      "radius": 0.3599,
+      "width": 0.4697,
+      "file": "wheel_rear.glb",
+      "mirrored": false
+    },
+    "FL": {
+      "hub": [
+        0.7815,
+        0.3599,
+        1.5097
+      ],
+      "radius": 0.3599,
+      "width": 0.4305,
+      "file": "wheel_front.glb",
+      "mirrored": false
+    }
+  },
+  "livery": {
+    "size": 2048,
+    "views": {
+      "left": [
+        16,
+        16,
+        1378,
+        333
+      ],
+      "right": [
+        16,
+        365,
+        1378,
+        333
+      ],
+      "top": [
+        16,
+        714,
+        1378,
+        507
+      ]
+    },
+    "packed_zones": [
+      [
+        1410,
+        16,
+        622,
+        2016
+      ],
+      [
+        16,
+        1237,
+        1378,
+        795
+      ]
+    ],
+    "px_per_metre": 300.0
+  },
+  "materials": [
+    "livery",
+    "Carbon-Fibre",
+    "EMPTY",
+    "Material.047",
+    "Interoir",
+    "Metal-Balck",
+    "Mirror-Glass",
+    "Material.045",
+    "Material.043",
+    "Material.044",
+    "Material.041",
+    "Material.026",
+    "Logo-1",
+    "Logo-2",
+    "Material.017",
+    "Material.016",
+    "Material.014",
+    "Material.013",
+    "Material.012",
+    "Material.011",
+    "Material.010",
+    "Material.009",
+    "Material.008"
+  ]
+}
