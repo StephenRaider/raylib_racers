@@ -314,14 +314,22 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
     DrawCircleV({x + 22, ty + 7}, 7, compoundColor(c.state.compound));
     DrawCircleV({x + 22, ty + 7}, 4.5f, Color{25, 25, 30, 255});
     text(compoundName(c.state.compound), x + 34, ty, 13, kDim);
+    const rr::Compound& comp = rr::compoundInfo(c.state.compound);
     for (int axle = 0; axle < 2; ++axle) {
         float wear = c.state.tireWear[axle];
-        float bx = x + 100 + axle * 120;
+        float bx = x + 96 + axle * 104;
         text(axle == 0 ? "F" : "R", bx, ty, 13, kDim);
-        Rectangle wb = {bx + 14, ty + 3, 80, 9};
+        Rectangle wb = {bx + 14, ty + 3, 50, 9};
         DrawRectangleRec(wb, Fade(WHITE, 0.12f));
         Color wc = wear > 0.7f ? Color{240, 70, 60, 255} : (wear > 0.45f ? kAccent : Color{90, 200, 120, 255});
         DrawRectangleRec({wb.x, wb.y, wb.width * (1 - wear), wb.height}, wc);  // tyre life left
+        // temperature against the compound's window: blue cold, green in it, amber / red hot
+        float t = c.state.tireTemp[axle];
+        Color tc = t < comp.tempLo ? Color{110, 170, 240, 255}
+                   : t <= comp.tempHi ? Color{90, 200, 120, 255}
+                   : t <= comp.tempHi + 10 ? kAccent : Color{240, 70, 60, 255};
+        std::snprintf(buf, sizeof buf, "%.0f", t);
+        text(buf, bx + 68, ty - 1, 14, tc, false, true);
     }
     std::snprintf(buf, sizeof buf, "%d laps", c.lapsOnTires);
     textRight(buf, x + w - 16, ty - 1, 14, kDim, false, true);
@@ -442,9 +450,10 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
                     std::snprintf(note, sizeof note, "tyres never wear out");
                 } else {
                     std::snprintf(val, sizeof val, "%d laps", life);
-                    // compounds wear at 1.7x (soft) and 0.6x (hard) the medium rate
+                    // compounds wear faster (soft) or slower (hard) than the medium
                     std::snprintf(note, sizeof note, "soft %d, medium %d, hard %d laps before the grip falls away",
-                                  std::max(1, (int)std::lround(life / 1.7f)), life, (int)std::lround(life / 0.6f));
+                                  std::max(1, (int)std::lround(life / rr::compoundWear(RR_TIRE_SOFT))), life,
+                                  (int)std::lround(life / rr::compoundWear(RR_TIRE_HARD)));
                 }
                 break;
             }

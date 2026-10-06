@@ -29,9 +29,9 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 3
-/* Robots built for ABI 2 still load: version 3 only appended fields to
- * RRCarSpec and RRSensors. */
+#define RR_ABI_VERSION 4
+/* Robots built for ABI 2 or 3 still load: versions 3 and 4 only appended
+ * fields to RRCarSpec and RRSensors. */
 #define RR_ABI_MIN_VERSION 2
 
 #define RR_NUM_TRACK_SENSORS 19
@@ -41,10 +41,15 @@ extern "C" {
 #define RR_NUM_DEBUG 8
 #define RR_MAX_NEARBY 8
 
-/* Tyre compounds: softer is grippier but wears faster.
- * New-tyre grip: soft x1.035, medium x1.0, hard x0.975.
- * Wear rate:     soft x1.7,   medium x1.0, hard x0.6.
- * Worn grip: 1 - 0.07 * wear, falling off a cliff past wear 0.7 (-0.8 per unit beyond). */
+/* Tyre compounds: softer is grippier but wears faster and works cooler.
+ *                    soft      medium    hard
+ * New-tyre grip:     x1.05     x1.0      x0.965
+ * Wear rate:         x2.0      x1.0      x0.55
+ * Working window:    85-105 C  95-115 C  105-125 C
+ * Worn grip: 1 - 0.07 * wear, falling off a cliff past wear 0.7 (-0.8 per unit beyond).
+ * Temperature: -0.25% grip per C below the window, -0.2% per C above (at most -20%);
+ * wear x(1 + 0.06 per C above the window), x(1 + 0.015 per C below it).
+ * Tyres come off the warmers at 80 C (race start and after a stop). */
 #define RR_TIRE_SOFT 1
 #define RR_TIRE_MEDIUM 2
 #define RR_TIRE_HARD 3
@@ -190,7 +195,7 @@ typedef struct RRSensors {
     /* consumables */
     float fuel;             /* litres left; at 0 the engine stops */
     float tire_wear[2];     /* front, rear: 0 new .. 1 worn out */
-    float tire_grip;        /* current grip multiplier from compound and wear (1 = new medium) */
+    float tire_grip;        /* grip multiplier from compound and wear, both axles averaged (1 = new medium); axle_grip adds temperature */
     int tire_compound;      /* RR_TIRE_* */
     int laps_on_tires;
 
@@ -219,6 +224,14 @@ typedef struct RRSensors {
     float blue_flag_ds;     /* its track distance from us, m (negative = behind) */
     int penalties;          /* time penalties so far */
     float penalty_time;     /* s, added to the race time */
+
+    /* --- ABI 4 --- */
+    float tire_temp[2];        /* front, rear tyre temperature, C */
+    float tire_temp_window[2]; /* the fitted compound's working window: low, high, C */
+    float axle_grip[2];        /* front, rear grip multiplier now: compound x wear x temperature (tire_grip leaves out temperature) */
+    float ambient_temp;        /* C */
+    float slipstream;          /* drag reduction from a car ahead, 0..0.45 */
+    float dirty_air;           /* downforce lost to a car ahead, 0..0.10 (the front loses more) */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */

@@ -58,8 +58,19 @@ struct CarParams {
     float fuelCapacity = 58.0f;   // litres: about 25 laps of the circuit at ~2.3 l/lap
     float fuelDensity = 0.75f;    // kg/l
     float fuelPerJoule = 1.2e-7f; // litres per joule of engine work (~25% efficient at 34 MJ/l)
-    // Tyre wear: wear per joule of sliding work, before compound and race multipliers.
+    // Tyre wear: wear per joule of sliding work, before compound, temperature
+    // and race multipliers.
     float wearPerJoule = 2.0e-8f;
+    // Tyre temperature, one lumped temperature per axle. Heat comes from the
+    // sliding work (the same work that wears the tyre) and from rolling under
+    // load; the airflow takes it away, more at speed.
+    float tireHeatCap = 9000.0f;     // J/K per axle
+    float tireSlideHeat = 0.85f;     // share of the cornering slide work that heats the tyre
+    float tireLonHeat = 0.3f;        // ...and of the braking / traction slip work
+    float tireRollHeat = 0.008f;     // W per (N of load x m/s)
+    float tireCoolBase = 60.0f;      // W/K per axle, standing still
+    float tireCoolSpeed = 2.2f;      // extra W/K per m/s
+    float blanketTemp = 80.0f;       // C: tyres come off the warmers at this temperature
     // Damage, growing linearly up to damageForMaxLoss: broken wings and floor
     // cost downforce and add drag, a hurt engine loses power, bent suspension
     // loses mechanical grip.
@@ -98,6 +109,7 @@ struct CarState {
     float damage = 0;
     float fuel = 58;
     float tireWear[2] = {0, 0};  // front, rear
+    float tireTemp[2] = {80, 80};  // C, front, rear
     int compound = RR_TIRE_MEDIUM;
 
     Vec2 velWorld() const { return rotate({vx, vy}, yaw); }
@@ -108,18 +120,29 @@ struct Surface {
     float muScale = 1.0f;   // grip multiplier
     float extraDrag = 0.0f; // N per m/s (grass)
     float dragScale = 1.0f; // < 1 in another car's slipstream
+    float downforceScale = 1.0f, frontDownforceScale = 1.0f;  // < 1 in another car's dirty air
 };
 
 // Race-wide multipliers (command line) for consumables.
 struct WearRates {
     float fuel = 1.0f;
     float tire = 1.0f;
+    float ambient = 25.0f;  // C, air and track
 };
+
+// Tyre compounds: grip of a new tyre, wear rate and the temperature window
+// where the tyre works best (C).
+struct Compound {
+    float grip, wear, tempLo, tempHi;
+};
+const Compound& compoundInfo(int compound);
 
 float compoundGrip(int compound);  // grip multiplier of a new tyre
 float compoundWear(int compound);  // wear-rate multiplier
 float wornGrip(float wear);        // grip multiplier from wear (1 when new, cliff past 0.7)
-float axleGrip(const CarState& c, int axle);  // compound x wear, 0 front / 1 rear
+float tempGrip(int compound, float temp);  // grip multiplier from temperature (1 inside the window)
+float tempWear(int compound, float temp);  // wear multiplier from temperature (1 inside the window)
+float axleGrip(const CarState& c, int axle);  // compound x wear x temperature, 0 front / 1 rear
 float carMass(const CarParams& p, const CarState& c);  // including fuel
 float damageLevel(const CarParams& p, const CarState& c);  // 0 intact .. 1 at damageForMaxLoss
 

@@ -81,7 +81,7 @@ Consumables and pit:
 |---|---|
 | `fuel` | litres left. Fuel weighs `fuel_density` kg/l; at 0 the engine stops (5 s stopped with an empty tank is a DNF) |
 | `tire_wear[2]` | front, rear: 0 new .. 1 worn out |
-| `tire_grip` | grip multiplier from compound and wear, 1 = new medium |
+| `tire_grip` | grip multiplier from compound and wear (both axles averaged), 1 = new medium. Leaves out temperature: see `axle_grip` |
 | `tire_compound`, `laps_on_tires` | `RR_TIRE_SOFT` / `MEDIUM` / `HARD`, laps since they were fitted |
 | `pit_state` | `RR_PIT_NONE`, `RR_PIT_LANE` (speed limited), `RR_PIT_SERVICE` (in the box, controls ignored), `RR_PIT_DONE` (serviced, still in the lane) |
 | `pit_stops`, `pit_box_s`, `service_time_left` | completed stops, where this car's box is (track `s`), time left while serviced |
@@ -94,6 +94,23 @@ What the tyres are doing (ABI 3), the signals a driver feels through the seat:
 | `slip_angle[2]` | front, rear slip angles, rad. Rear larger than front = the rear is stepping out |
 | `accel_x`, `accel_y` | body-frame acceleration, m/s² (y + = left), as the suspension feels it |
 | `wheel_load[4]` | N on each wheel: front left, front right, rear left, rear right |
+
+Tyre temperature and other cars' air (ABI 4):
+
+| Field | Meaning |
+|---|---|
+| `tire_temp[2]` | front, rear tyre temperature, °C. Tyres leave the warmers at 80 °C (race start and after a stop) |
+| `tire_temp_window[2]` | the fitted compound's working window, low and high, °C: soft 85-105, medium 95-115, hard 105-125. Below it the tyre loses 0.25% grip per °C and grains (wear +1.5% per °C); above it 0.2% per °C and blisters (wear +6% per °C, so 17 °C over doubles the wear) |
+| `axle_grip[2]` | front, rear grip multiplier right now: compound x wear x temperature |
+| `ambient_temp` | air and track temperature (`--ambient`, default 25 °C) |
+| `slipstream` | drag reduction from the car ahead, 0 .. 0.45 (strongest right behind it, gone 60 m back or 3.5 m to the side) |
+| `dirty_air` | downforce lost to the car ahead, 0 .. 0.10, more of it at the front (gone 40 m back or 3 m to the side) |
+
+Heat comes from the same sliding work that wears the tyres (cornering slip
+in full, braking and traction slip in part) plus rolling under load, and the
+airflow takes it away, more at speed. Driving harder or following closely
+(dirty air makes the front slide) heats the tyres; lifting or a cleaner line
+cools them.
 
 Flags (ABI 3):
 
@@ -189,6 +206,11 @@ lasts, and drives a blended path into and out of its box.
   how early a pass starts; the viewer's "racingline aggressive" uses 1.4.
 - **Blue flags**: move to the side away from the lapping car and lift a
   little until it is by (`rr_blue_flag`).
+- **Tyres**: the speed profile assumes tyres in their window and scales with
+  `axle_grip` when they are cold or hot; past `heat` °C over the window
+  (default 5) it backs off on purpose to cool them.
+- **Starts**: it holds its grid lane and eases onto the line over the first
+  400 m instead of diving across the field.
 - **The limit**: it learns how much grip each 20 m of track really has. A
   stretch where the tyres slid (`grip_use` past 1.1) or the car went off gets
   slower, and so does the braking zone before it; stretches driven well inside

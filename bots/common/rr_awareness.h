@@ -118,8 +118,13 @@ static inline void rr_grip_guard(const RRSensors* in, RRControl* out, float* tc,
         if (out->accel > 0.25f) out->accel = 0.25f;
         if (out->brake > 0.15f) out->brake = 0.15f; /* braking a sliding rear makes it worse */
     } else if (front > 1.15f && fabsf(af) > fabsf(ar)) {
-        /* understeer: past the front's peak more lock only scrubs speed; ease off */
-        if (out->accel > 0.3f) out->accel *= 0.6f;
+        /* understeer: past the front's peak more lock only scrubs speed. Unwind
+         * the lock towards the peak slip angle and lift, which moves weight
+         * onto the front and lets it bite again. */
+        float k = 1.1f / front;
+        out->steer *= k < 0.6f ? 0.6f : k;
+        if (front > 1.3f) out->accel = 0.0f;
+        else if (out->accel > 0.3f) out->accel *= 0.6f;
     }
 }
 

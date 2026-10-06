@@ -35,6 +35,8 @@
 //   push=<1.2>     how far above `grip` the learnt limit may go (1 = never)
 //   learn=<1>      0 disables learning the limit
 //   attack=<1>     racecraft aggression: > 1 follows closer and looks for gaps sooner
+//   heat=<5>       how far (C) past the top of the tyres' window it keeps pushing before
+//                  backing off to cool them
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -51,7 +53,7 @@ struct P2 { float x, y; };
 
 enum Mode { RACE, PIT_IN, PIT_OUT };
 
-float compoundWear(int c) { return c == RR_TIRE_SOFT ? 1.7f : (c == RR_TIRE_HARD ? 0.6f : 1.0f); }
+float compoundWear(int c) { return c == RR_TIRE_SOFT ? 2.0f : (c == RR_TIRE_HARD ? 0.55f : 1.0f); }
 float smooth01(float u) { u = std::clamp(u, 0.0f, 1.0f); return u * u * (3 - 2 * u); }
 
 struct RacingLine {
@@ -72,6 +74,9 @@ struct RacingLine {
     float plannedMass = 0, plannedGrip = 0;
     float damage = 0;            // 0..1, as the speed profile last assumed
     float attack = 1.0f;         // racecraft: > 1 follows closer and goes for gaps sooner
+    float heat = 5.0f;           // C past the tyre window tolerated before backing off
+    float tyreNow = 1.0f;        // speed factor for the tyres' temperature right now (smoothed)
+    float startLat = 0, startDist = 0;  // grid slot: hold that lane off the line, then ease onto the racing line
     float sideLo = -1e9f, sideHi = 1e9f;  // lateral room left by cars alongside (absolute, m)
     int plannedLap = -1;
 
@@ -231,6 +236,7 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* pa
     r->push = std::max(1.0f, rr_param(params, "push", 1.2f));
     r->learn = rr_param(params, "learn", 1.0f) != 0.0f;
     r->attack = std::clamp(rr_param(params, "attack", 1.0f), 0.5f, 2.0f);
+    r->heat = rr_param(params, "heat", 5.0f);
     cfg->initial_fuel = rr_param(params, "fuel", car->fuel_capacity);
     cfg->tire_compound = (int)rr_param(params, "tires", (float)RR_TIRE_MEDIUM);
     r->car = *car;
@@ -551,6 +557,8 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     const float s = in->dist_from_start;
 
     if (in->time < 0.05) {
+        r->startLat = in->track_pos * r->tp[idx].half_width;
+        r->startDist = in->dist_raced;
         r->fuelRef = in->fuel;
         r->fuelDistRef = r->wearDistRef = std::max(0.0f, in->dist_raced);
     }
@@ -628,9 +636,14 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         r->sideLo = -1e9f;
         r->sideHi = 1e9f;
     }
+    // Off the grid: keep to our side of the track and ease onto the line over
+    // the first few hundred metres instead of diving across the field.
+    const float launch = smooth01((in->dist_raced - r->startDist) / 400.0f);
     auto targetOffset = [&](int i) {
-        return pitting ? pitOffset(*r, i, in->pit_box_s, serviced)
-                       : std::clamp(r->offset[r->wrap(i)] + r->passOffset, r->sideLo, r->sideHi);
+        if (pitting) return pitOffset(*r, i, in->pit_box_s, serviced);
+        float line = r->offset[r->wrap(i)];
+        if (launch < 1.0f) line = r->startLat + (line - r->startLat) * launch;
+        return std::clamp(line + r->passOffset, r->sideLo, r->sideHi);
     };
 
     // Pure pursuit on the path, plus a cross-track term (pure pursuit alone
@@ -653,9 +666,23 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     delta -= r->yawGain * (in->yaw_rate - v * r->kappaSigned[r->wrap(idx + 2)]);
     out->steer = std::clamp(delta / r->car.max_steer, -1.0f, 1.0f);
 
+    // Tyre temperature: the profile assumes tyres in their window. Cold or
+    // overheated ones have less grip (axle_grip against tire_grip), and past
+    // our heat tolerance we back off on purpose to cool them.
+    {
+        float f = 1.0f;
+        if (in->tire_temp_window[1] > 0) {  // ABI 4 host
+            const float grip = std::max(0.5f, in->tire_grip);
+            f = std::clamp(std::min(in->axle_grip[0], in->axle_grip[1]) / grip, 0.8f, 1.05f);
+            const float over = std::max(in->tire_temp[0], in->tire_temp[1]) - (in->tire_temp_window[1] + r->heat);
+            if (over > 0) f *= std::max(0.9f, 1.0f - 0.006f * over);
+        }
+        const float dt = in->dt > 0 ? in->dt : 0.02f;
+        r->tyreNow += (f - r->tyreNow) * std::min(1.0f, dt / 1.5f);
+    }
     // Speed control against the profile, looking a little ahead for actuator lag.
     int si = r->wrap(idx + (int)(v * 0.15f / r->ds) + 1);
-    float vTarget = std::min(r->speed[si], speedCap);
+    float vTarget = std::min(r->speed[si] * std::sqrt(r->tyreNow), speedCap);
 
     if (pitting) {
         const RRPitInfo& p = r->pit;

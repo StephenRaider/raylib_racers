@@ -15,7 +15,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   barrier and car-to-car collisions, lap timing and classification. Fixed 500 Hz
   physics, robots called at 50 Hz, fully deterministic.
 - **Race mechanics**: fuel load and consumption, tyre wear with grip loss
-  (soft, medium and hard compounds), damage that costs downforce, power and grip, slipstream,
+  (soft, medium and hard compounds, each with a temperature window), dirty air, damage that costs downforce, power and grip, slipstream,
   and a pit lane with a speed limiter, a box per car and timed service (fuel,
   tyres, repairs). After the flag each car runs a slow lap into the pit lane
   and parks behind its box.
@@ -85,8 +85,9 @@ each car goes out alone for an out lap and two flying laps, and the fastest
 lap takes pole. `Enter` skips the current run, `Shift+Enter` the rest of
 qualifying. `--no-menu` skips the menu. The default grid runs the four
 `racingline` variants in turn: standard, aggressive (`grip=0.85,brake=0.75,
-push=1.3,attack=1.4`: brakes later, learns closer to the limit, follows closer
-and goes for gaps sooner), safe (`grip=0.75`) and steady (`grip=0.7,brake=0.6`);
+push=1.3,attack=1.4,heat=15`: brakes later, learns closer to the limit, follows
+closer, goes for gaps sooner and runs its tyres hotter), safe (`grip=0.75`) and
+steady (`grip=0.7,brake=0.6,heat=0`);
 `gapfollow` and `simple` are still on the Grid page.
 
 The engine sound is synthesised from each car's revs and throttle (a V10 with
@@ -117,6 +118,18 @@ outside wheel. Downforce has a balance that moves forward under braking and
 fades when the car slides sideways. Robots see `grip_use` and `slip_angle`
 per axle, so under- and oversteer show up in telemetry
 (`--telemetry DIR` writes them per car).
+
+Tyres have a temperature per axle and a working window per compound (soft
+85-105 °C, medium 95-115, hard 105-125). Sliding and rolling heat them, the
+airflow cools them; cold tyres lose grip and grain, overheated ones lose grip
+and wear several times faster, so driving hard costs tyre life. They leave the
+warmers at 80 °C, so the first lap and the out lap after a stop are slower.
+Fuel weight costs about a second a lap from a full tank to an empty one (tyre
+load sensitivity is measured against the dry car). A car within 40 m behind
+another loses up to 10% of its downforce in the dirty air, mostly at the
+front, while the slipstream (up to 60 m back) cuts its drag. The car panel in
+the viewer shows each axle's tyre temperature: blue cold, green in the
+window, amber and red hot.
 
 ## Blue flags
 
