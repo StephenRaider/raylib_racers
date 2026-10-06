@@ -43,9 +43,9 @@ std::vector<Algorithm> listAlgorithms(const Paths& paths) {
     std::vector<Algorithm> algos = {
         // The racingline family first: the default grid uses these four.
         {"racingline", "racingline", ""},
-        {"racingline aggressive", "racingline", "grip=0.85,brake=0.75,push=1.3,attack=1.4"},
+        {"racingline aggressive", "racingline", "grip=0.85,brake=0.75,push=1.3,attack=1.4,heat=15"},
         {"racingline safe", "racingline", "grip=0.75"},
-        {"racingline steady", "racingline", "grip=0.7,brake=0.6"},
+        {"racingline steady", "racingline", "grip=0.7,brake=0.6,heat=0"},
         {"gapfollow", "gapfollow", ""},
         {"gapfollow safe", "gapfollow", "speed=0.85"},
         {"gapfollow steady", "gapfollow", "speed=0.8"},

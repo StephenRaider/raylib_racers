@@ -73,6 +73,7 @@ struct Car {
 
     // after the flag: a cool-down lap into the pit lane
     bool parked = false;
+    float draft = 0, dirtyAir = 0;  // drag and downforce lost to other cars' wakes, fractions
     int parkSlot = -1;          // spot in the pit lane, 0 = furthest down
 
     FILE* telemetry = nullptr;
@@ -132,7 +133,7 @@ private:
     void updatePit(Car& c);
     void updateBlueFlags();
     RRControl coolDownControl(Car& c);
-    float slipstream(const Car& c) const;
+    void wake(Car& c) const;  // slipstream and dirty air behind other cars
     void finishService(Car& c);
     float wrapDs(float ds) const;
 

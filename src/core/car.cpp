@@ -35,7 +35,8 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(dragCoeff), F(downforceCoeff), F(downforceFront), F(aeroPitchShift), F(aeroYawLoss),
         F(rollingResist), F(wheelRadius), F(finalDrive), F(reverseRatio), F(idleRpm), F(maxRpm),
         F(maxBrakeForce), F(brakeFront), F(engineBrake), F(drivetrainEff), F(fuelCapacity), F(fuelDensity),
-        F(fuelPerJoule), F(wearPerJoule), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
+        F(fuelPerJoule), F(wearPerJoule), F(tireHeatCap), F(tireSlideHeat), F(tireLonHeat), F(tireRollHeat),
+        F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
         F(pitServiceScale),
     };
 #undef F
@@ -51,12 +52,31 @@ float* CarParams::field(const std::string& name) {
     return nullptr;
 }
 
-float compoundGrip(int compound) {
-    return compound == RR_TIRE_SOFT ? 1.035f : (compound == RR_TIRE_HARD ? 0.975f : 1.0f);
+const Compound& compoundInfo(int compound) {
+    static const Compound soft{1.05f, 2.0f, 85, 105}, medium{1.0f, 1.0f, 95, 115}, hard{0.965f, 0.55f, 105, 125};
+    return compound == RR_TIRE_SOFT ? soft : (compound == RR_TIRE_HARD ? hard : medium);
 }
 
-float compoundWear(int compound) {
-    return compound == RR_TIRE_SOFT ? 1.7f : (compound == RR_TIRE_HARD ? 0.6f : 1.0f);
+float compoundGrip(int compound) { return compoundInfo(compound).grip; }
+float compoundWear(int compound) { return compoundInfo(compound).wear; }
+
+// Cold tyres lose 0.25% grip per degree below the window, hot ones 0.2% per
+// degree above it.
+float tempGrip(int compound, float t) {
+    const Compound& k = compoundInfo(compound);
+    float g = 1.0f;
+    if (t < k.tempLo) g -= 0.0025f * (k.tempLo - t);
+    else if (t > k.tempHi) g -= 0.002f * (t - k.tempHi);
+    return std::max(0.8f, g);
+}
+
+// Overheated tyres wear fast (blistering: x2 at 17 C over the window), cold
+// ones a little faster too (graining).
+float tempWear(int compound, float t) {
+    const Compound& k = compoundInfo(compound);
+    if (t > k.tempHi) return 1.0f + 0.06f * (t - k.tempHi);
+    if (t < k.tempLo) return 1.0f + 0.015f * (k.tempLo - t);
+    return 1.0f;
 }
 
 float wornGrip(float w) {
@@ -64,7 +84,9 @@ float wornGrip(float w) {
     return 1.0f - 0.07f * w - 0.8f * std::max(0.0f, w - 0.7f);
 }
 
-float axleGrip(const CarState& c, int axle) { return compoundGrip(c.compound) * wornGrip(c.tireWear[axle]); }
+float axleGrip(const CarState& c, int axle) {
+    return compoundGrip(c.compound) * wornGrip(c.tireWear[axle]) * tempGrip(c.compound, c.tireTemp[axle]);
+}
 
 float damageLevel(const CarParams& p, const CarState& c) { return std::min(1.0f, c.damage / p.damageForMaxLoss); }
 
@@ -196,8 +218,11 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float aeroLoss = p.maxAeroLoss * dmg;
     const float sideslip = std::fabs(c.vx) > 5.0f ? std::atan(c.vy / std::fabs(c.vx)) : 0.0f;
     const float yawLoss = std::max(0.75f, 1.0f - p.aeroYawLoss * sideslip * sideslip);
-    const float down = p.downforceCoeff * (1 - aeroLoss) * yawLoss * c.vx * c.vx;
-    const float balance = clampf(p.downforceFront - p.aeroPitchShift * c.ax / g, 0.3f, 0.6f);
+    // Dirty air takes away downforce, more of it at the front (the car pushes).
+    const float down = p.downforceCoeff * (1 - aeroLoss) * yawLoss * surf.downforceScale * c.vx * c.vx;
+    const float balance0 = clampf(p.downforceFront - p.aeroPitchShift * c.ax / g, 0.3f, 0.6f);
+    const float frontShare = balance0 * surf.frontDownforceScale;
+    const float balance = frontShare / (frontShare + (1 - balance0));
     const float drag = p.dragCoeff * (1 + p.maxDragGain * dmg) * surf.dragScale * c.vx * std::fabs(c.vx);
 
     // --- wheel loads ---
@@ -205,6 +230,9 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     // axles, lateral transfer between left and right split by roll stiffness.
     // ax/ay lag behind the real accelerations like a sprung car does.
     const float fzAxle0[2] = {m * g * b / L, m * g * a / L};
+    // Tyre load sensitivity is measured against the dry car's static load, so
+    // fuel weight costs grip as well as acceleration.
+    const float fzRef[2] = {p.mass * g * b / L, p.mass * g * a / L};
     float fzAxle[2] = {fzAxle0[0] + down * balance - m * c.ax * p.cgHeight / L,
                        fzAxle0[1] + down * (1 - balance) + m * c.ax * p.cgHeight / L};
     const float track[2] = {p.trackFront, p.trackRear};
@@ -238,7 +266,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     float muW[4], fyW[4], fxW[4];
     for (int w = 0; w < 4; ++w) {
         const int ax = w / 2;
-        const float fz0 = 0.5f * fzAxle0[ax];
+        const float fz0 = 0.5f * fzRef[ax];
         muW[w] = mu * axleGripK[ax] * std::max(0.6f, 1.0f - p.muLoadDrop * (fz[w] / fz0 - 1.0f));
         fyW[w] = tyreLateral(p, stiff[ax], alpha[ax], fz[w], fz0, muW[w]);
     }
@@ -277,7 +305,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     for (int ax = 0; ax < 2; ++ax) {
         float worst = 0;
         for (int w = 2 * ax; w < 2 * ax + 2; ++w) {
-            const float fz0 = 0.5f * fzAxle0[ax];
+            const float fz0 = 0.5f * fzRef[ax];
             const float bEff = p.tireB * stiff[ax] * std::pow(fz0 / fz[w], p.loadSens);
             const float lat = bEff * std::fabs(alpha[ax]) / peakBa;
             const float lon = fxW[w] / (muW[w] * fz[w]);
@@ -296,11 +324,22 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     // plus longitudinal work (more when the rear is spinning or locking).
     {
         const float v = std::fabs(c.vx);
-        const float workF = std::fabs(fyf) * std::fabs(wfLat) + std::fabs(fxf) * 0.03f * v;
-        const float workR = std::fabs(fyr) * std::fabs(vrLat) + std::fabs(fxr) * (0.03f + 0.3f * std::min(1.0f, c.wheelSpin)) * v;
+        const float latF = std::fabs(fyf) * std::fabs(wfLat), lonF = std::fabs(fxf) * 0.03f * v;
+        const float latR = std::fabs(fyr) * std::fabs(vrLat);
+        const float lonR = std::fabs(fxr) * (0.03f + 0.3f * std::min(1.0f, c.wheelSpin)) * v;
+        const float workF = latF + lonF, workR = latR + lonR;
         const float k = p.wearPerJoule * compoundWear(c.compound) * rates.tire * dt;
-        c.tireWear[0] = std::min(1.0f, c.tireWear[0] + workF * k);
-        c.tireWear[1] = std::min(1.0f, c.tireWear[1] + workR * k);
+        c.tireWear[0] = std::min(1.0f, c.tireWear[0] + workF * k * tempWear(c.compound, c.tireTemp[0]));
+        c.tireWear[1] = std::min(1.0f, c.tireWear[1] + workR * k * tempWear(c.compound, c.tireTemp[1]));
+
+        // Temperature: sliding and rolling heat in, airflow out.
+        const float work[2] = {latF + p.tireLonHeat * lonF, latR + p.tireLonHeat * lonR};
+        const float cool = p.tireCoolBase + p.tireCoolSpeed * v;
+        for (int ax = 0; ax < 2; ++ax) {
+            const float roll = p.tireRollHeat * (fz[2 * ax] + fz[2 * ax + 1]) * v;
+            const float heat = p.tireSlideHeat * work[ax] + roll - cool * (c.tireTemp[ax] - rates.ambient);
+            c.tireTemp[ax] += heat / p.tireHeatCap * dt;
+        }
     }
 
     // --- body forces ---

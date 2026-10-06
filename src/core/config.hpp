@@ -24,6 +24,7 @@ struct RaceConfig {
     float maxTime = 0;         // 0 = automatic
     float fuelRate = 1.0f;     // fuel consumption multiplier
     float wearRate = 1.0f;     // tyre wear multiplier
+    float ambient = 25.0f;     // air and track temperature, C
     std::string devRules = "development";  // rules for --dev, file or name in specs/
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     std::string jsonOut;

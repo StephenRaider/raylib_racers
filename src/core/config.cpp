@@ -32,6 +32,7 @@ std::string usage(const char* prog, bool viewer) {
         "  --max-time SECONDS     abort the race after this long (default: automatic)\n"
         "  --fuel-rate X          fuel consumption multiplier (default 1)\n"
         "  --wear-rate X          tyre wear multiplier (default 1; raise it to force stops in short races)\n"
+        "  --ambient C            air and track temperature (default 25): hotter days overheat the tyres\n"
         "Output\n"
         "  --json FILE            write results as JSON\n"
         "  --telemetry DIR        write one CSV per car at the robot rate\n"
@@ -80,6 +81,7 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (a == "--robot-hz") cfg.robotHz = std::stoi(need(i, a));
             else if (a == "--fuel-rate") cfg.fuelRate = std::stof(need(i, a));
             else if (a == "--wear-rate") cfg.wearRate = std::stof(need(i, a));
+            else if (a == "--ambient") cfg.ambient = std::stof(need(i, a));
             else if (a == "--max-time") cfg.maxTime = std::stof(need(i, a));
             else if (a == "--json") cfg.jsonOut = need(i, a);
             else if (a == "--telemetry") cfg.telemetryDir = need(i, a);

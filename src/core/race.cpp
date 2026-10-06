@@ -18,6 +18,7 @@ const float kCheckpointSpacing = 10.0f;
 const float kRestitutionWall = 0.25f;
 const float kRestitutionCar = 0.2f;
 const float kDraftMax = 0.45f, kDraftLength = 60.0f, kDraftWidth = 3.5f;  // slipstream
+const float kDirtyMax = 0.10f, kDirtyLength = 40.0f, kDirtyWidth = 3.0f;  // dirty air: downforce lost
 const float kBoxSpacing = 14.0f, kFirstBox = 25.0f;
 const float kServiceBase = 2.0f;      // s: car jacked up and dropped
 const float kFuelFlow = 2.5f;         // l/s
@@ -164,7 +165,8 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
             std::fprintf(cars_[i].telemetry,
                          "time,x,y,yaw,speed,vx,vy,yaw_rate,steer,accel,brake,gear,rpm,track_pos,angle,"
                          "dist_raced,lap,on_track,wheel_spin,fuel,wear_front,wear_rear,tire_grip,damage,pit_state,"
-                         "grip_front,grip_rear,slip_front,slip_rear,accel_x,accel_y,blue_flag,d0,d1,d2,d3,d4,d5,d6,d7\n");
+                         "grip_front,grip_rear,slip_front,slip_rear,accel_x,accel_y,blue_flag,temp_front,temp_rear,"
+                         "axle_grip_front,axle_grip_rear,slipstream,dirty_air,d0,d1,d2,d3,d4,d5,d6,d7\n");
         }
     }
 
@@ -186,6 +188,7 @@ void Race::placeOnGrid() {
         c.state.yaw = std::atan2(d.y, d.x);
         c.state.fuel = c.robotCfg.initial_fuel;
         c.state.compound = c.robotCfg.tire_compound;
+        c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
         TrackLoc loc = track_.locateGlobal(c.state.pos);
         c.trackIdx = loc.idx;
         c.trackS = loc.s;
@@ -284,7 +287,17 @@ void Race::computeSensors(Car& c) {
     s.fuel = st.fuel;
     s.tire_wear[0] = st.tireWear[0];
     s.tire_wear[1] = st.tireWear[1];
-    s.tire_grip = 0.5f * (axleGrip(st, 0) + axleGrip(st, 1));
+    s.tire_grip = 0.5f * (compoundGrip(st.compound) * (wornGrip(st.tireWear[0]) + wornGrip(st.tireWear[1])));
+    const Compound& comp = compoundInfo(st.compound);
+    for (int ax = 0; ax < 2; ++ax) {
+        s.tire_temp[ax] = st.tireTemp[ax];
+        s.axle_grip[ax] = axleGrip(st, ax);
+    }
+    s.tire_temp_window[0] = comp.tempLo;
+    s.tire_temp_window[1] = comp.tempHi;
+    s.ambient_temp = cfg_.ambient;
+    s.slipstream = c.draft;
+    s.dirty_air = c.dirtyAir;
     s.tire_compound = st.compound;
     s.laps_on_tires = c.lapsOnTires;
     s.pit_state = c.pitState;
@@ -398,6 +411,8 @@ void Race::writeTelemetry(const Car& c) {
                  s.damage, s.pit_state);
     std::fprintf(c.telemetry, ",%.3f,%.3f,%.4f,%.4f,%.2f,%.2f,%d", s.grip_use[0], s.grip_use[1], s.slip_angle[0],
                  s.slip_angle[1], s.accel_x, s.accel_y, s.blue_flag);
+    std::fprintf(c.telemetry, ",%.1f,%.1f,%.4f,%.4f,%.3f,%.3f", s.tire_temp[0], s.tire_temp[1], s.axle_grip[0],
+                 s.axle_grip[1], s.slipstream, s.dirty_air);
     for (float d : k.debug) std::fprintf(c.telemetry, ",%.4g", d);
     std::fputc('\n', c.telemetry);
 }
@@ -565,19 +580,21 @@ void Race::updateProgress(Car& c) {
     }
 }
 
-// Drag reduction from running in another car's wake: strongest right behind
-// it, gone 60 m back or 3.5 m to the side.
-float Race::slipstream(const Car& c) const {
-    if (c.state.vx < 15.0f) return 0.0f;
-    float best = 0;
+// Running in another car's wake. Slipstream: less drag, strongest right
+// behind it, gone 60 m back or 3.5 m to the side. Dirty air: less downforce
+// (up to 10%), mostly at the front, gone 40 m back or 3 m to the side.
+void Race::wake(Car& c) const {
+    c.draft = c.dirtyAir = 0;
+    if (c.state.vx < 15.0f) return;
     for (const Car& o : cars_) {
         if (&o == &c || o.state.vx < 15.0f) continue;
         Vec2 rel = rotate(c.state.pos - o.state.pos, -o.state.yaw);
         float behind = -rel.x, side = std::fabs(rel.y);
         if (behind < 3.0f || behind > kDraftLength || side > kDraftWidth) continue;
-        best = std::max(best, kDraftMax * (1 - behind / kDraftLength) * (1 - side / kDraftWidth));
+        c.draft = std::max(c.draft, kDraftMax * (1 - behind / kDraftLength) * (1 - side / kDraftWidth));
+        if (behind < kDirtyLength && side < kDirtyWidth)
+            c.dirtyAir = std::max(c.dirtyAir, kDirtyMax * (1 - behind / kDirtyLength) * (1 - side / kDirtyWidth));
     }
-    return best;
 }
 
 void Race::updatePit(Car& c) {
@@ -625,6 +642,7 @@ void Race::finishService(Car& c) {
     if (c.pitOrder.pit_tires) {
         c.state.compound = c.pitOrder.pit_tires;
         c.state.tireWear[0] = c.state.tireWear[1] = 0;
+        c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
         c.lapsOnTires = 0;
     }
     if (c.pitOrder.pit_repair) c.state.damage = 0;
@@ -782,14 +800,17 @@ void Race::step() {
     if (steps_ % robotPeriod_ == 0) callRobots();
 
     const float dt = cfg_.dt;
-    const WearRates rates{cfg_.fuelRate, cfg_.wearRate};
+    const WearRates rates{cfg_.fuelRate, cfg_.wearRate, cfg_.ambient};
     for (Car& c : cars_) {
         Surface surf;
         if (!track_.paved(c.trackS, c.lateral, c.halfWidth)) {
             surf.muScale = 0.7f;
             surf.extraDrag = 250.0f;
         }
-        surf.dragScale = 1.0f - slipstream(c);
+        wake(c);
+        surf.dragScale = 1.0f - c.draft;
+        surf.downforceScale = 1.0f - c.dirtyAir;
+        surf.frontDownforceScale = 1.0f - 0.5f * c.dirtyAir;  // the front loses more: the car pushes
         RRControl in = c.control;
         if (!c.dnf && (c.finished || over_)) {
             in = coolDownControl(c);
