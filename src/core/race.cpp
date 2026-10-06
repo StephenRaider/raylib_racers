@@ -1,0 +1,671 @@
+#include "race.hpp"
+
+#include <algorithm>
+#include <cstring>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+namespace rr {
+
+namespace {
+
+const float kDefaultSensorAngles[RR_NUM_TRACK_SENSORS] = {-90, -75, -60, -45, -30, -20, -15, -10, -5, 0,
+                                                          5,   10,  15,  20,  30,  45,  60,  75,  90};
+const float kCheckpointSpacing = 10.0f;
+const float kRestitutionWall = 0.25f;
+const float kRestitutionCar = 0.2f;
+const float kDraftMax = 0.45f, kDraftLength = 60.0f, kDraftWidth = 3.5f;  // slipstream
+const float kBoxSpacing = 14.0f, kFirstBox = 25.0f;
+const float kServiceBase = 2.0f;      // s: car jacked up and dropped
+const float kFuelFlow = 2.5f;         // l/s
+const float kTireChange = 3.5f;       // s, runs in parallel with refuelling
+const float kRepairPer1000 = 1.0f;    // s per 1000 damage
+
+float yawInertia(const Car& c) { return c.phys.yawInertia; }  // fuel sits at the CG
+
+float cross2(Vec2 r, Vec2 n) { return r.x * n.y - r.y * n.x; }
+Vec2 angVel(float w, Vec2 r) { return {-w * r.y, w * r.x}; }
+
+std::string findTrack(const std::string& t, const std::vector<std::string>& dirs) {
+    std::error_code ec;
+    if (fs::exists(t, ec) && !fs::is_directory(t, ec)) return t;
+    for (const auto& d : dirs) {
+        for (const auto& cand : {t, t + ".trk"}) {
+            fs::path p = fs::path(d) / cand;
+            if (fs::exists(p, ec) && !fs::is_directory(p, ec)) return p.string();
+        }
+    }
+    return "";
+}
+
+std::string fmtTime(double t) {
+    if (t <= 0) return "-";
+    int m = (int)(t / 60);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%d:%06.3f", m, t - m * 60);
+    return buf;
+}
+
+std::string jsonEscape(const std::string& s) {
+    std::string o;
+    for (char ch : s) {
+        if (ch == '"' || ch == '\\') { o += '\\'; o += ch; }
+        else if ((unsigned char)ch < 0x20) o += ' ';
+        else o += ch;
+    }
+    return o;
+}
+
+}  // namespace
+
+Race::~Race() {
+    for (auto& c : cars_) {
+        if (c.robot && c.module && c.module->api()->destroy) c.module->api()->destroy(c.robot);
+        if (c.telemetry) std::fclose(c.telemetry);
+    }
+}
+
+bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
+                 const std::vector<std::string>& trackDirs, std::string* err) {
+    cfg_ = cfg;
+    rng_.seed(cfg.seed);
+    robotPeriod_ = std::max(1, (int)std::lround(1.0 / (cfg.robotHz * cfg.dt)));
+
+    std::string trackPath = findTrack(cfg.track, trackDirs);
+    if (trackPath.empty()) {
+        if (err) *err = "track '" + cfg.track + "' not found";
+        return false;
+    }
+    if (!track_.load(trackPath, err)) return false;
+    if (cfg.entries.empty()) {
+        if (err) *err = "no cars: add at least one --car";
+        return false;
+    }
+
+    cars_.resize(cfg.entries.size());
+    for (size_t i = 0; i < cfg.entries.size(); ++i) {
+        const auto& e = cfg.entries[i];
+        Car& c = cars_[i];
+        c.module = RobotModule::load(e.robot, botDirs, err);
+        if (!c.module) return false;
+        const RRRobotApi* api = c.module->api();
+        c.robotName = api->name ? api->name : e.robot;
+        c.name = e.name.empty() ? c.robotName : e.name;
+        c.params = e.params;
+        std::memcpy(c.robotCfg.track_sensor_angles, kDefaultSensorAngles, sizeof kDefaultSensorAngles);
+        c.robotCfg.auto_gear = 1;
+        c.robotCfg.initial_fuel = c.phys.fuelCapacity;
+        c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
+        RRCarSpec spec = c.phys.spec();
+        c.robot = api->create(&track_.info(), &spec, (int)i, c.params.c_str(), &c.robotCfg);
+        if (!c.robot) {
+            if (err) *err = "robot '" + c.robotName + "' refused car " + std::to_string(i) + " (params: \"" + c.params + "\")";
+            return false;
+        }
+        c.robotCfg.initial_fuel = clampf(c.robotCfg.initial_fuel, 0.0f, c.phys.fuelCapacity);
+        if (c.robotCfg.tire_compound < RR_TIRE_SOFT || c.robotCfg.tire_compound > RR_TIRE_HARD)
+            c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
+    }
+    // Make duplicate names unique: "simple", "simple #2", ...
+    for (size_t i = 0; i < cars_.size(); ++i) {
+        int dup = 1;
+        for (size_t j = 0; j < i; ++j)
+            if (cfg.entries[j].name.empty() && cars_[j].robotName == cars_[i].robotName) ++dup;
+        if (dup > 1 && cfg.entries[i].name.empty()) cars_[i].name += " #" + std::to_string(dup);
+    }
+
+    if (!cfg.telemetryDir.empty()) {
+        std::error_code ec;
+        fs::create_directories(cfg.telemetryDir, ec);
+        for (size_t i = 0; i < cars_.size(); ++i) {
+            std::string fname = cfg.telemetryDir + "/car" + std::to_string(i) + ".csv";
+            cars_[i].telemetry = std::fopen(fname.c_str(), "w");
+            if (!cars_[i].telemetry) {
+                if (err) *err = "cannot write " + fname;
+                return false;
+            }
+            std::fprintf(cars_[i].telemetry,
+                         "time,x,y,yaw,speed,vx,vy,yaw_rate,steer,accel,brake,gear,rpm,track_pos,angle,"
+                         "dist_raced,lap,on_track,wheel_spin,fuel,wear_front,wear_rear,tire_grip,damage,pit_state,d0,d1,d2,d3,d4,d5,d6,d7\n");
+        }
+    }
+
+    maxTime_ = cfg.maxTime > 0 ? cfg.maxTime : cfg.laps * (track_.length() / 12.0) + 120.0;
+    placeOnGrid();
+    updateOrder();
+    return true;
+}
+
+void Race::placeOnGrid() {
+    for (size_t i = 0; i < cars_.size(); ++i) {
+        Car& c = cars_[i];
+        float s = -(10.0f + 7.0f * (float)i);
+        float side = (i % 2 == 0) ? 1.0f : -1.0f;
+        float lat = side * track_.at(track_.indexAt(s)).halfWidth * 0.4f;
+        Vec2 d = track_.dirAt(s);
+        c.state = CarState{};
+        c.state.pos = track_.pointAt(s, lat);
+        c.state.yaw = std::atan2(d.y, d.x);
+        c.state.fuel = c.robotCfg.initial_fuel;
+        c.state.compound = c.robotCfg.tire_compound;
+        TrackLoc loc = track_.locateGlobal(c.state.pos);
+        c.trackIdx = loc.idx;
+        c.trackS = loc.s;
+        c.lateral = loc.lateral;
+        c.halfWidth = loc.halfWidth;
+        c.distRaced = s;
+        c.control = RRControl{};
+        c.control.gear = 1;
+        if (track_.hasPit()) {
+            // Boxes from the start of the lane, 14 m apart; cars share them if the lane is short.
+            const RRPitInfo& p = track_.pit();
+            float laneLen = std::fmod(p.lane_end_s - p.lane_start_s + track_.length(), track_.length());
+            int boxes = std::max(1, (int)((laneLen - 2 * kFirstBox) / kBoxSpacing) + 1);
+            float bs = p.lane_start_s + kFirstBox + kBoxSpacing * (float)(i % boxes);
+            c.pitBoxS = std::fmod(bs, track_.length());
+        }
+    }
+}
+
+float Race::wrapDs(float ds) const {
+    const float L = track_.length();
+    ds = std::fmod(ds, L);
+    if (ds > L * 0.5f) ds -= L;
+    if (ds <= -L * 0.5f) ds += L;
+    return ds;
+}
+
+void Race::computeSensors(Car& c) {
+    RRSensors& s = c.sensors;
+    const CarState& st = c.state;
+    const double prevTime = s.time;
+    std::memset(&s, 0, sizeof s);
+    s.time = time_;
+    s.dt = (float)(time_ - prevTime);
+
+    Vec2 td = track_.dirAt(c.trackS);
+    s.angle = wrapAngle(st.yaw - std::atan2(td.y, td.x));
+    s.track_pos = c.lateral / c.halfWidth;
+    s.on_track = c.onTrack ? 1 : 0;
+
+    std::normal_distribution<float> noise(0.0f, cfg_.sensorNoise);
+    for (int k = 0; k < RR_NUM_TRACK_SENSORS; ++k) {
+        if (!c.onTrack) { s.track[k] = -1; continue; }
+        float ang = st.yaw + c.robotCfg.track_sensor_angles[k] * (kPi / 180.0f);
+        float d = track_.raycastEdge(st.pos, fromAngle(ang), RR_SENSOR_RANGE);
+        if (cfg_.sensorNoise > 0) d = clampf(d * (1.0f + noise(rng_)), 0.0f, RR_SENSOR_RANGE);
+        s.track[k] = d;
+    }
+
+    for (float& o : s.opponents) o = RR_SENSOR_RANGE;
+    for (const Car& other : cars_) {
+        if (&other == &c) continue;
+        Vec2 d = other.state.pos - st.pos;
+        float dist = length(d);
+        if (dist >= RR_SENSOR_RANGE) continue;
+        float rel = wrapAngle(std::atan2(d.y, d.x) - st.yaw);
+        int sector = (int)std::floor((rel + kPi) / (2 * kPi / RR_NUM_OPPONENT_SENSORS));
+        sector = std::max(0, std::min(RR_NUM_OPPONENT_SENSORS - 1, sector));
+        s.opponents[sector] = std::min(s.opponents[sector], dist);
+    }
+
+    s.speed_x = st.vx;
+    s.speed_y = st.vy;
+    s.yaw_rate = st.yawRate;
+    s.rpm = st.rpm;
+    s.gear = st.gear;
+    s.wheel_spin = st.wheelSpin;
+    s.damage = st.damage;
+    s.dist_from_start = c.trackS;
+    s.dist_raced = (float)c.distRaced;
+    s.lap = c.currentLap(cfg_.laps);
+    s.race_laps = cfg_.laps;
+    s.race_pos = c.position;
+    s.num_cars = (int)cars_.size();
+    s.cur_lap_time = (float)(time_ - c.lapStart);
+    s.last_lap_time = c.lapTimes.empty() ? 0.0f : c.lapTimes.back();
+    s.best_lap_time = c.bestLap;
+    s.x = st.pos.x;
+    s.y = st.pos.y;
+    s.yaw = st.yaw;
+    s.track_index = c.trackIdx;
+
+    s.fuel = st.fuel;
+    s.tire_wear[0] = st.tireWear[0];
+    s.tire_wear[1] = st.tireWear[1];
+    s.tire_grip = 0.5f * (axleGrip(st, 0) + axleGrip(st, 1));
+    s.tire_compound = st.compound;
+    s.laps_on_tires = c.lapsOnTires;
+    s.pit_state = c.pitState;
+    s.pit_stops = c.pitStops;
+    s.pit_box_s = c.pitBoxS;
+    s.service_time_left = c.pitState == RR_PIT_SERVICE ? c.serviceLeft : 0.0f;
+
+    // Nearby cars, nearest first by track distance.
+    struct Cand { float key; int idx; float ds; };
+    Cand cand[64];
+    int nc = 0;
+    for (size_t j = 0; j < cars_.size() && nc < 64; ++j) {
+        const Car& o = cars_[j];
+        if (&o == &c) continue;
+        float ds = wrapDs(o.trackS - c.trackS);
+        cand[nc++] = {std::fabs(ds), (int)j, ds};
+    }
+    std::sort(cand, cand + nc, [](const Cand& a, const Cand& b) { return a.key < b.key || (a.key == b.key && a.idx < b.idx); });
+    s.num_nearby = std::min(nc, RR_MAX_NEARBY);
+    const float cy = std::cos(-st.yaw), sy = std::sin(-st.yaw);
+    for (int k = 0; k < s.num_nearby; ++k) {
+        const Car& o = cars_[cand[k].idx];
+        RROpponent& r = s.nearby[k];
+        Vec2 d = o.state.pos - st.pos;
+        r.car_index = cand[k].idx;
+        r.race_pos = o.position;
+        r.ds = cand[k].ds;
+        r.lateral = o.lateral;
+        r.speed = o.state.vx;
+        r.rel_x = d.x * cy - d.y * sy;
+        r.rel_y = d.x * sy + d.y * cy;
+        r.rel_yaw = wrapAngle(o.state.yaw - st.yaw);
+        r.pit_state = o.pitState;
+        r.laps_ahead = (int)std::floor(o.distRaced / track_.length()) - (int)std::floor(c.distRaced / track_.length());
+    }
+}
+
+void Race::callRobots() {
+    for (Car& c : cars_) {
+        if (c.dnf) {
+            c.control = RRControl{};
+            c.control.brake = 1;
+            c.control.gear = c.state.gear;
+            continue;
+        }
+        computeSensors(c);
+        RRControl ctl{};
+        ctl.gear = c.state.gear;
+        c.module->api()->drive(c.robot, &c.sensors, &ctl);
+        ctl.status[sizeof ctl.status - 1] = 0;
+        if (!std::isfinite(ctl.steer)) ctl.steer = 0;
+        if (!std::isfinite(ctl.accel)) ctl.accel = 0;
+        if (!std::isfinite(ctl.brake)) ctl.brake = 0;
+        c.control = ctl;
+        if (c.telemetry) writeTelemetry(c);
+    }
+}
+
+void Race::writeTelemetry(const Car& c) {
+    const auto& s = c.sensors;
+    const auto& k = c.control;
+    std::fprintf(c.telemetry, "%.3f,%.3f,%.3f,%.4f,%.3f,%.3f,%.3f,%.4f,%.4f,%.3f,%.3f,%d,%.0f,%.4f,%.4f,%.2f,%d,%d,%.3f,%.3f,%.4f,%.4f,%.4f,%.0f,%d",
+                 s.time, s.x, s.y, s.yaw, std::sqrt(s.speed_x * s.speed_x + s.speed_y * s.speed_y), s.speed_x,
+                 s.speed_y, s.yaw_rate, k.steer, k.accel, k.brake, s.gear, s.rpm, s.track_pos, s.angle, s.dist_raced,
+                 s.lap, s.on_track, s.wheel_spin, s.fuel, s.tire_wear[0], s.tire_wear[1], s.tire_grip,
+                 s.damage, s.pit_state);
+    for (float d : k.debug) std::fprintf(c.telemetry, ",%.4g", d);
+    std::fputc('\n', c.telemetry);
+}
+
+void Race::resolveWalls(Car& c) {
+    CarState& st = c.state;
+    const float hl = c.phys.length * 0.5f, hw = c.phys.width * 0.5f;
+    const Vec2 fwd = fromAngle(st.yaw), left = perpLeft(fwd);
+    const Vec2 corners[4] = {fwd * hl + left * hw, fwd * hl - left * hw, -fwd * hl + left * hw, -fwd * hl - left * hw};
+    const float m = carMass(c.phys, st), I = yawInertia(c);
+    const RRPitInfo& pit = track_.pit();
+    // Corners are at most half the diagonal from the centre: skip when far from
+    // every barrier (the outer barrier is never closer than the runoff) and from
+    // the pit wall.
+    const float reach = std::sqrt(hl * hl + hw * hw);
+    const float divMid = c.halfWidth + 0.5f * (Track::kDividerIn + Track::kDividerOut);
+    const bool nearDivider = track_.hasPit() &&
+                             track_.inSpan(c.trackS, pit.lane_start_s - 2 * reach, pit.lane_end_s + 2 * reach) &&
+                             std::fabs(c.lateral * pit.side - divMid) < reach + 1.0f;
+    if (!nearDivider && std::fabs(c.lateral) + reach < c.halfWidth + track_.runoff() - 0.5f) return;
+    // Which side of the pit wall the car is on decides which face it hits.
+    const bool carInLane = track_.hasPit() && c.lateral * pit.side > divMid;
+
+    for (const Vec2& r0 : corners) {
+        Vec2 p = st.pos + r0;
+        TrackLoc loc = track_.locate(p, c.trackIdx, 12);
+        const int side = loc.lateral > 0 ? 1 : -1;
+        const float a = std::fabs(loc.lateral);
+        const Vec2 out = track_.at(loc.idx).n * (float)side;  // away from the centreline
+        float pen = 0;
+        Vec2 nrm;
+        float wall = track_.barrierOffset(loc.s, side, loc.halfWidth);
+        if (a > wall) {
+            pen = a - wall;
+            nrm = -out;
+        } else if (track_.hasPit() && side == pit.side && track_.inPitLane(loc.s)) {
+            float in = loc.halfWidth + Track::kDividerIn, outer = loc.halfWidth + Track::kDividerOut;
+            if (a > in && a < outer) {
+                if (carInLane) { pen = outer - a; nrm = out; }
+                else { pen = a - in; nrm = -out; }
+            }
+        }
+        if (pen <= 0) continue;
+        st.pos += nrm * pen;
+        Vec2 r = r0;
+        Vec2 v = st.velWorld() + angVel(st.yawRate, r);
+        float vn = dot(v, nrm);
+        if (vn >= 0) continue;
+        float rn = cross2(r, nrm);
+        float j = -(1 + kRestitutionWall) * vn / (1 / m + rn * rn / I);
+        Vec2 tan = perpLeft(nrm);
+        float vt = dot(v, tan);
+        float rt = cross2(r, tan);
+        float jt = -vt / (1 / m + rt * rt / I);
+        jt = clampf(jt, -0.4f * j, 0.4f * j);
+        Vec2 impulse = nrm * j + tan * jt;
+        st.setVelWorld(st.velWorld() + impulse * (1 / m));
+        st.yawRate += cross2(r, impulse) / I;
+        if (-vn > 1.0f) {
+            st.damage += (-vn) * (-vn);
+            c.collisions++;
+        }
+    }
+}
+
+void Race::resolveCarPair(Car& a, Car& b) {
+    Vec2 d0 = a.state.pos - b.state.pos;
+    if (dot(d0, d0) > 36.0f) return;
+    // Each car is approximated by three circles along its length.
+    const float offs[3] = {-1.45f, 0.0f, 1.45f};
+    const float ra = a.phys.width * 0.5f, rb = b.phys.width * 0.5f;
+    Vec2 fa = fromAngle(a.state.yaw), fb = fromAngle(b.state.yaw);
+    float bestPen = 0;
+    Vec2 bestN, bestC;
+    for (float oa : offs) {
+        Vec2 pa = a.state.pos + fa * oa;
+        for (float ob : offs) {
+            Vec2 pb = b.state.pos + fb * ob;
+            Vec2 d = pa - pb;
+            float dist = length(d);
+            float pen = ra + rb - dist;
+            if (pen > bestPen && dist > 1e-5f) {
+                bestPen = pen;
+                bestN = d * (1 / dist);
+                bestC = pb + bestN * rb;
+            }
+        }
+    }
+    if (bestPen <= 0) return;
+    const float ma = carMass(a.phys, a.state), mb = carMass(b.phys, b.state), Ia = yawInertia(a), Ib = yawInertia(b);
+    a.state.pos += bestN * (bestPen * 0.5f);
+    b.state.pos -= bestN * (bestPen * 0.5f);
+    Vec2 rA = bestC - a.state.pos, rB = bestC - b.state.pos;
+    Vec2 va = a.state.velWorld() + angVel(a.state.yawRate, rA);
+    Vec2 vb = b.state.velWorld() + angVel(b.state.yawRate, rB);
+    float vrel = dot(va - vb, bestN);
+    if (vrel >= 0) return;
+    float rnA = cross2(rA, bestN), rnB = cross2(rB, bestN);
+    float j = -(1 + kRestitutionCar) * vrel / (1 / ma + 1 / mb + rnA * rnA / Ia + rnB * rnB / Ib);
+    Vec2 imp = bestN * j;
+    a.state.setVelWorld(a.state.velWorld() + imp * (1 / ma));
+    b.state.setVelWorld(b.state.velWorld() - imp * (1 / mb));
+    a.state.yawRate += cross2(rA, imp) / Ia;
+    b.state.yawRate -= cross2(rB, imp) / Ib;
+    if (-vrel > 1.0f) {
+        a.state.damage += vrel * vrel;
+        b.state.damage += vrel * vrel;
+        a.collisions++;
+        b.collisions++;
+    }
+}
+
+void Race::updateProgress(Car& c) {
+    TrackLoc loc = track_.locate(c.state.pos, c.trackIdx, 8);
+    float L = track_.length();
+    float ds = loc.s - c.trackS;
+    if (ds > L * 0.5f) ds -= L;
+    if (ds < -L * 0.5f) ds += L;
+    c.distRaced += ds;
+    c.trackIdx = loc.idx;
+    c.trackS = loc.s;
+    c.lateral = loc.lateral;
+    c.halfWidth = loc.halfWidth;
+    c.onTrack = std::fabs(loc.lateral) <= loc.halfWidth;
+
+    if (c.finished || c.dnf) return;
+
+    if (c.distRaced >= 0) {
+        size_t k = (size_t)(c.distRaced / kCheckpointSpacing);
+        while (c.checkpoints.size() <= k) c.checkpoints.push_back(time_);
+    }
+    int lapsNow = (int)std::floor(c.distRaced / L);
+    while (lapsNow > c.lapsDone) {
+        float lt = (float)(time_ - c.lapStart);
+        c.lapTimes.push_back(lt);
+        if (c.bestLap <= 0 || lt < c.bestLap) c.bestLap = lt;
+        c.lapStart = time_;
+        c.lapsDone++;
+        c.lapsOnTires++;
+        if (c.lapsDone >= cfg_.laps) {
+            c.finished = true;
+            c.finishTime = time_;
+            if (leaderFinish_ < 0) leaderFinish_ = time_;
+            break;
+        }
+    }
+
+    float speed = std::sqrt(c.state.vx * c.state.vx + c.state.vy * c.state.vy);
+    c.stuckTime = (speed < 0.5f && c.pitState != RR_PIT_SERVICE) ? c.stuckTime + cfg_.dt : 0.0f;
+    c.noFuelTime = (speed < 0.5f && c.state.fuel <= 0) ? c.noFuelTime + cfg_.dt : 0.0f;
+    if (c.noFuelTime > 5.0f) {
+        c.dnf = true;
+        c.dnfReason = "out of fuel";
+    } else if (c.stuckTime > 60.0f) {
+        c.dnf = true;
+        c.dnfReason = "stuck";
+    }
+}
+
+// Drag reduction from running in another car's wake: strongest right behind
+// it, gone 60 m back or 3.5 m to the side.
+float Race::slipstream(const Car& c) const {
+    if (c.state.vx < 15.0f) return 0.0f;
+    float best = 0;
+    for (const Car& o : cars_) {
+        if (&o == &c || o.state.vx < 15.0f) continue;
+        Vec2 rel = rotate(c.state.pos - o.state.pos, -o.state.yaw);
+        float behind = -rel.x, side = std::fabs(rel.y);
+        if (behind < 3.0f || behind > kDraftLength || side > kDraftWidth) continue;
+        best = std::max(best, kDraftMax * (1 - behind / kDraftLength) * (1 - side / kDraftWidth));
+    }
+    return best;
+}
+
+void Race::updatePit(Car& c) {
+    if (!track_.hasPit()) return;
+    const RRPitInfo& p = track_.pit();
+    const float side = (float)p.side;
+    const float divMid = c.halfWidth + 0.5f * (Track::kDividerIn + Track::kDividerOut);
+    const bool inLane = track_.inPitLane(c.trackS) && c.lateral * side > divMid;
+    const float speed = std::sqrt(c.state.vx * c.state.vx + c.state.vy * c.state.vy);
+
+    if (inLane) c.pitLaneTime += cfg_.dt;
+    switch (c.pitState) {
+    case RR_PIT_NONE:
+        if (inLane && !c.dnf) c.pitState = RR_PIT_LANE;
+        break;
+    case RR_PIT_LANE: {
+        if (!inLane) { c.pitState = RR_PIT_NONE; break; }
+        float boxLat = c.halfWidth + Track::kBoxCentre;
+        bool atBox = std::fabs(wrapDs(c.trackS - c.pitBoxS)) < 2.5f && std::fabs(c.lateral * side - boxLat) < 2.0f;
+        if (c.control.pit_request && atBox && speed < 0.5f && !c.finished) {
+            c.pitOrder = c.control;
+            float fuel = clampf(c.pitOrder.pit_fuel, 0.0f, c.phys.fuelCapacity - c.state.fuel);
+            c.pitOrder.pit_fuel = fuel;
+            bool tyres = c.pitOrder.pit_tires >= RR_TIRE_SOFT && c.pitOrder.pit_tires <= RR_TIRE_HARD;
+            if (!tyres) c.pitOrder.pit_tires = 0;
+            c.serviceLeft = kServiceBase + std::max(fuel / kFuelFlow, tyres ? kTireChange : 0.0f) +
+                            (c.pitOrder.pit_repair ? kRepairPer1000 * c.state.damage / 1000.0f : 0.0f);
+            c.pitState = RR_PIT_SERVICE;
+        }
+        break;
+    }
+    case RR_PIT_SERVICE:
+        c.serviceLeft -= cfg_.dt;
+        if (c.serviceLeft <= 0) finishService(c);
+        break;
+    case RR_PIT_DONE:
+        if (!inLane) c.pitState = RR_PIT_NONE;
+        break;
+    }
+}
+
+void Race::finishService(Car& c) {
+    c.state.fuel = std::min(c.phys.fuelCapacity, c.state.fuel + c.pitOrder.pit_fuel);
+    if (c.pitOrder.pit_tires) {
+        c.state.compound = c.pitOrder.pit_tires;
+        c.state.tireWear[0] = c.state.tireWear[1] = 0;
+        c.lapsOnTires = 0;
+    }
+    if (c.pitOrder.pit_repair) c.state.damage = 0;
+    c.serviceLeft = 0;
+    c.pitStops++;
+    c.pitLaps.push_back(c.currentLap(cfg_.laps));
+    c.pitState = RR_PIT_DONE;
+}
+
+void Race::updateOrder() {
+    order_.resize(cars_.size());
+    for (size_t i = 0; i < cars_.size(); ++i) order_[i] = (int)i;
+    std::stable_sort(order_.begin(), order_.end(), [&](int ia, int ib) {
+        const Car& a = cars_[ia];
+        const Car& b = cars_[ib];
+        if (a.finished != b.finished) return a.finished;
+        if (a.finished) return a.finishTime < b.finishTime;
+        if (a.dnf != b.dnf) return !a.dnf;
+        return a.distRaced > b.distRaced;
+    });
+    const Car& leader = cars_[order_[0]];
+    for (size_t p = 0; p < order_.size(); ++p) {
+        Car& c = cars_[order_[p]];
+        c.position = (int)p + 1;
+        c.lapsBehind = (int)std::floor((leader.distRaced - c.distRaced) / track_.length());
+        if (c.finished && leader.finished) {
+            c.gap = c.finishTime - leader.finishTime;
+            c.lapsBehind = 0;
+        } else if (!c.checkpoints.empty() && leader.checkpoints.size() >= c.checkpoints.size()) {
+            size_t k = c.checkpoints.size() - 1;
+            c.gap = c.checkpoints[k] - leader.checkpoints[k];
+        } else {
+            c.gap = p == 0 ? 0.0 : -1.0;  // not timed yet (still behind the start line)
+        }
+    }
+}
+
+void Race::step() {
+    if (over_) return;
+    if (steps_ % robotPeriod_ == 0) callRobots();
+
+    const float dt = cfg_.dt;
+    const WearRates rates{cfg_.fuelRate, cfg_.wearRate};
+    for (Car& c : cars_) {
+        Surface surf;
+        if (!track_.paved(c.trackS, c.lateral, c.halfWidth)) {
+            surf.muScale = 0.7f;
+            surf.extraDrag = 250.0f;
+        }
+        surf.dragScale = 1.0f - slipstream(c);
+        RRControl in = c.control;
+        if (c.pitState == RR_PIT_SERVICE) {
+            in = RRControl{};
+            in.brake = 1;
+            in.gear = c.state.gear;
+        } else if (c.pitState == RR_PIT_LANE || c.pitState == RR_PIT_DONE) {
+            // Pit limiter: no drive above the limit, braking well above it.
+            float over = c.state.vx - track_.pit().speed_limit;
+            if (over > 0) {
+                in.accel = 0;
+                in.brake = std::max(in.brake, clampf(over * 0.3f, 0.0f, 1.0f));
+            }
+        }
+        stepCar(c.state, c.phys, in, c.robotCfg.auto_gear != 0, surf, rates, dt);
+        if (c.pitState == RR_PIT_SERVICE) {
+            c.state.vx = c.state.vy = c.state.yawRate = 0;
+        }
+    }
+    for (Car& c : cars_) resolveWalls(c);
+    for (size_t i = 0; i < cars_.size(); ++i)
+        for (size_t j = i + 1; j < cars_.size(); ++j) resolveCarPair(cars_[i], cars_[j]);
+
+    time_ += dt;
+    steps_++;
+    for (Car& c : cars_) {
+        updateProgress(c);
+        updatePit(c);
+    }
+    updateOrder();
+
+    bool allDone = true;
+    for (const Car& c : cars_)
+        if (!c.finished && !c.dnf) allDone = false;
+    // Once the leader finishes, the others get to complete their lap (bounded).
+    bool timeout = leaderFinish_ >= 0 && time_ > leaderFinish_ + std::max(60.0, track_.length() / 10.0);
+    if (allDone || timeout || time_ >= maxTime_) {
+        over_ = true;
+        for (Car& c : cars_)
+            if (!c.finished && !c.dnf && time_ >= maxTime_) c.dnfReason = "time limit";
+        for (Car& c : cars_)
+            if (c.telemetry) std::fflush(c.telemetry);
+    }
+}
+
+void Race::advance(double seconds) {
+    long long n = (long long)std::floor(seconds / cfg_.dt + 1e-9);
+    for (long long i = 0; i < n && !over_; ++i) step();
+}
+
+void Race::printResults(FILE* out) const {
+    std::fprintf(out, "\n%s, %d lap%s, %.1f m\n", track_.name().c_str(), cfg_.laps, cfg_.laps > 1 ? "s" : "",
+                 track_.length());
+    std::fprintf(out, " Pos  %-22s %-12s %10s %10s %6s %6s %s\n", "Driver", "Robot", "Time", "Best lap", "Laps",
+                 "Hits", "Stops");
+    for (int idx : order_) {
+        const Car& c = cars_[idx];
+        std::string t;
+        if (c.finished) t = c.position == 1 ? fmtTime(c.finishTime) : "+" + fmtTime(c.finishTime - cars_[order_[0]].finishTime);
+        else if (c.dnf) t = "DNF " + c.dnfReason;
+        else t = c.dnfReason.empty() ? "running" : c.dnfReason;
+        std::string stops = std::to_string(c.pitStops);
+        for (size_t k = 0; k < c.pitLaps.size(); ++k) stops += (k ? "," : " (L") + std::to_string(c.pitLaps[k]);
+        if (!c.pitLaps.empty()) stops += ")";
+        std::fprintf(out, " %3d  %-22s %-12s %10s %10s %6d %6d %s\n", c.position, c.name.c_str(),
+                     c.robotName.c_str(), t.c_str(), fmtTime(c.bestLap).c_str(), c.lapsDone, c.collisions,
+                     stops.c_str());
+    }
+}
+
+bool Race::writeJson(const std::string& path, double wallSeconds) const {
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) return false;
+    std::fprintf(f, "{\n  \"track\": \"%s\",\n  \"track_length\": %.2f,\n  \"laps\": %d,\n  \"seed\": %llu,\n",
+                 jsonEscape(track_.name()).c_str(), track_.length(), cfg_.laps, (unsigned long long)cfg_.seed);
+    std::fprintf(f, "  \"sim_time\": %.3f,\n  \"wall_time\": %.3f,\n  \"cars\": [\n", time_, wallSeconds);
+    for (size_t p = 0; p < order_.size(); ++p) {
+        const Car& c = cars_[order_[p]];
+        std::fprintf(f, "    {\"position\": %d, \"car_index\": %d, \"name\": \"%s\", \"robot\": \"%s\", \"params\": \"%s\", ",
+                     c.position, order_[p], jsonEscape(c.name).c_str(), jsonEscape(c.robotName).c_str(),
+                     jsonEscape(c.params).c_str());
+        std::fprintf(f, "\"finished\": %s, \"dnf\": %s, \"status\": \"%s\", \"total_time\": %.3f, \"best_lap\": %.3f, ",
+                     c.finished ? "true" : "false", c.dnf ? "true" : "false",
+                     c.finished ? "finished" : (c.dnf ? ("dnf " + c.dnfReason).c_str() : (c.dnfReason.empty() ? "running" : c.dnfReason.c_str())),
+                     c.finished ? c.finishTime : 0.0, c.bestLap);
+        std::fprintf(f, "\"distance\": %.2f, \"collisions\": %d, \"damage\": %.1f, ", c.distRaced,
+                     c.collisions, c.state.damage);
+        std::fprintf(f, "\"fuel_left\": %.2f, \"tire_wear\": [%.3f, %.3f], \"tire_compound\": %d, \"pit_stops\": %d, "
+                        "\"pit_lane_time\": %.2f, \"pit_laps\": [",
+                     c.state.fuel, c.state.tireWear[0], c.state.tireWear[1], c.state.compound, c.pitStops, c.pitLaneTime);
+        for (size_t k = 0; k < c.pitLaps.size(); ++k) std::fprintf(f, "%s%d", k ? ", " : "", c.pitLaps[k]);
+        std::fprintf(f, "], \"lap_times\": [");
+        for (size_t k = 0; k < c.lapTimes.size(); ++k) std::fprintf(f, "%s%.3f", k ? ", " : "", c.lapTimes[k]);
+        std::fprintf(f, "]}%s\n", p + 1 < order_.size() ? "," : "");
+    }
+    std::fprintf(f, "  ]\n}\n");
+    std::fclose(f);
+    return true;
+}
+
+}  // namespace rr

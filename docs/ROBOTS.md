@@ -1,0 +1,206 @@
+# Writing a robot
+
+A robot is a shared library that drives one or more cars. The whole contract is
+one C header, [`include/rr/robot_api.h`](../include/rr/robot_api.h), so a robot
+can be written in C, C++, or anything else that can export a C function.
+
+The design follows TORCS: the host owns the physics, calls your `drive()` at a
+fixed rate (50 Hz by default) with a sensor snapshot, and applies the controls
+you return until the next call.
+
+## The smallest robot
+
+```c
+#include "rr/robot_api.h"
+#include <stdlib.h>
+
+static void* create(const RRTrackInfo* track, const RRCarSpec* car, int index,
+                    const char* params, RRRobotConfig* config) {
+    return calloc(1, 1);  /* your per-car state */
+}
+
+static void drive(void* self, const RRSensors* in, RRControl* out) {
+    out->steer = 3.0f * (-in->angle - 0.5f * in->track_pos);  /* line up with the track, stay central */
+    out->accel = in->speed_x < 25 ? 0.5f : 0.0f;  /* gently: full throttle in 1st gear spins the car */
+}
+
+static void destroy(void* self) { free(self); }
+
+static const RRRobotApi api = {RR_ABI_VERSION, "tiny", "me", create, drive, destroy, NULL};
+RR_EXPORT const RRRobotApi* rr_robot_entry(void) { return &api; }
+```
+
+Build it and race it:
+
+```sh
+cc -O2 -shared -fPIC -I path/to/raylib-racers/include tiny.c -o tiny.so
+./rr_race --car ./tiny.so --car racingline
+```
+
+Or add it to the project's `CMakeLists.txt` next to the examples with
+`rr_add_robot(tiny bots/tiny/tiny.c)`; it then builds into `build/bots/` and can
+be named as `--car tiny`.
+
+## Lifecycle
+
+| Call | When | Notes |
+|---|---|---|
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; `abi_version` must equal `RR_ABI_VERSION` |
+| `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
+| `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
+| `destroy(self)` | end of race | free your state |
+| `debug_path(self, xy, max)` | viewer frames (optional) | write up to `max` (x, y) points; the viewer draws them in the car's colour |
+
+The same library can drive several cars in one race (`--car racingline --car
+racingline`), so keep state in the pointer you return from `create()`, not in
+globals.
+
+## Sensors (`RRSensors`)
+
+SCR / TORCS-style sensors:
+
+| Field | Meaning |
+|---|---|
+| `angle` | car heading minus track direction, rad. Positive: nose points left of the track axis |
+| `track_pos` | 0 on the centreline, +1 at the left tarmac edge, -1 at the right. Beyond ±1 you are off the tarmac |
+| `track[19]` | range finders to the tarmac edge, m (max 200). Directions come from `config->track_sensor_angles` (degrees, positive left), which you may change in `create()`. All -1 when off the tarmac |
+| `opponents[36]` | nearest car in each 10° sector, m (200 if none). Sector `i` covers [-180+10i, -170+10i) degrees; 0° is straight ahead |
+| `speed_x`, `speed_y`, `yaw_rate` | body-frame velocity (x forward, y left) and yaw rate |
+| `rpm`, `gear`, `wheel_spin` | `wheel_spin` > 0 means the rear tyres are past their grip: use it for traction control |
+| `damage` | accumulated collision damage; costs downforce (up to 35% at 8000), repaired in the pits |
+
+Race state: `dist_from_start`, `dist_raced`, `lap`, `race_laps`, `race_pos`,
+`num_cars`, `cur_lap_time`, `last_lap_time`, `best_lap_time`.
+
+Ground truth, like a TORCS robot gets: world pose `x`, `y`, `yaw`, the nearest
+centreline sample `track_index`, and `on_track`.
+
+Consumables and pit:
+
+| Field | Meaning |
+|---|---|
+| `fuel` | litres left. Fuel weighs `fuel_density` kg/l; at 0 the engine stops (5 s stopped with an empty tank is a DNF) |
+| `tire_wear[2]` | front, rear: 0 new .. 1 worn out |
+| `tire_grip` | grip multiplier from compound and wear, 1 = new medium |
+| `tire_compound`, `laps_on_tires` | `RR_TIRE_SOFT` / `MEDIUM` / `HARD`, laps since they were fitted |
+| `pit_state` | `RR_PIT_NONE`, `RR_PIT_LANE` (speed limited), `RR_PIT_SERVICE` (in the box, controls ignored), `RR_PIT_DONE` (serviced, still in the lane) |
+| `pit_stops`, `pit_box_s`, `service_time_left` | completed stops, where this car's box is (track `s`), time left while serviced |
+
+Other cars, for racecraft: `nearby[num_nearby]` lists up to 8 cars, nearest
+first by track distance. Each `RROpponent` has `ds` (track distance, + ahead),
+`lateral` (their offset from the centreline, m), `speed`, their position and
+heading in your body frame (`rel_x`, `rel_y`, `rel_yaw`), `race_pos`,
+`pit_state` and `laps_ahead` (negative: a backmarker you are lapping).
+
+## Controls (`RRControl`)
+
+| Field | Range | Notes |
+|---|---|---|
+| `steer` | -1 .. 1 | +1 is full left; multiply by `car->max_steer` for the road-wheel angle |
+| `accel`, `brake` | 0 .. 1 | |
+| `gear` | -1 .. num_gears | ignored with automatic gears (the default) except `-1`, which selects reverse once the car is nearly stopped. Set `config->auto_gear = 0` in `create()` to shift yourself |
+| `status` | 64 chars | shown in the viewer's car panel |
+| `debug[8]` | floats | written to the telemetry CSV as `d0..d7` |
+| `pit_request` | 0 / 1 | keep it set while driving to your box |
+| `pit_fuel` | litres | fuel to add, clamped to the tank |
+| `pit_tires` | 0 or `RR_TIRE_*` | 0 keeps the tyres |
+| `pit_repair` | 0 / 1 | repair all damage |
+
+## Fuel, tyres and pit stops
+
+The physics is in `src/core/car.cpp`; the numbers a strategy needs are:
+
+- **Fuel** burns in proportion to engine work: about 3.1 l per lap of the
+  circuit at racing speed, so the 60 l tank lasts about 19 laps. A full tank
+  adds 45 kg, which costs about 0.3 s a lap. `--fuel-rate X` scales consumption.
+- **Tyres** wear in proportion to sliding work (cornering, braking, wheelspin).
+  A medium loses about 0.03 per lap of the circuit. Grip falls 7% from new to
+  wear 0.7, then off a cliff (-0.8 per unit of wear beyond 0.7).
+  Softs grip 3.5% more and wear 1.7x faster; hards grip 2.5% less and wear 0.6x.
+  `--wear-rate X` scales wear (handy for forcing stops in short races).
+- **Slipstream**: a car up to 60 m behind another and within 3.5 m of its
+  line has up to 45% less drag, so a faster car can close up on a straight
+  and pull out to pass.
+
+Starting fuel and tyres are set in `create()` through `config->initial_fuel`
+and `config->tire_compound`.
+
+**The pit lane.** `track->pit` describes it: `side` (+1 left), the stretch of
+track it runs along (`entry_s` -> `lane_start_s` -> `lane_end_s` -> `exit_s`), the
+lateral centre of the fast lane (`lane_offset`) and of the boxes (`box_offset`),
+and the `speed_limit`. Between `lane_start_s` and `lane_end_s` a wall separates
+the lane from the track, so you must have moved across before `lane_start_s`.
+
+A stop, step by step:
+
+1. Before `entry_s`, decide to stop and steer off the racing line towards
+   `lane_offset`, braking to the limit by `lane_start_s`.
+2. In the lane (`pit_state == RR_PIT_LANE`) the host's limiter cuts throttle
+   above `speed_limit`. Set `pit_request` and the order fields.
+3. Move to `box_offset` and stop within about 2.5 m of `pit_box_s`. The crew
+   starts: `pit_state` becomes `RR_PIT_SERVICE` and the car is held still for
+   2 s + max(fuel / 2.5 l/s, 3.5 s if changing tyres) + 1 s per 1000 damage
+   when repairing.
+4. When `pit_state` turns to `RR_PIT_DONE`, drive back to `lane_offset`, then
+   rejoin the track after `lane_end_s`.
+
+`bots/racingline` does all of this: it measures fuel and wear per metre,
+decides one lap ahead, orders fuel to the flag and the softest compound that
+lasts, and drives a blended path into and out of its box.
+
+## Racecraft
+
+`racingline` also shows a simple approach to wheel-to-wheel racing with the
+`nearby` list:
+
+- **Follow**: never close on a car in your path faster than the gap allows.
+- **Overtake**: when closing on the car ahead, move to the side that is
+  cheapest through the next corners (checked with the speed the track allows
+  at that offset), keep the side once alongside, and slow for the tighter or
+  wider line.
+- **Defend**: when a car on the same lap closes within 25 m behind, cover the
+  inside of the next corner with one move, hold it for a few seconds, then
+  return to the line.
+- **Space**: never steer into a car that is alongside.
+
+Its `pass=0` and `defend=0` parameters switch the behaviours off for
+comparison.
+
+## Track and car
+
+`RRTrackInfo` holds the centreline sampled about every metre: position,
+direction, distance from the start, half width and signed curvature. That is
+enough to plan a racing line (see `bots/racingline`).
+
+`RRCarSpec` gives mass, dimensions, steering lock, tyre friction, aero
+coefficients (`drag = drag_coeff * v²`, `downforce = downforce_coeff * v²`),
+gearing and brake force, so a planner can estimate cornering and braking limits.
+
+## Parameters and experiments
+
+Everything after `--params` reaches `create()` unchanged. The examples read
+`key=value,key=value` with `bots/common/rr_params.h`:
+
+```sh
+for g in 0.75 0.8 0.85; do
+  ./rr_race --car racingline --params "grip=$g" --laps 3 --quiet --json grip_$g.json
+done
+```
+
+Races are deterministic: the same command line (and `--seed` when `--noise` is
+used) gives the same result, so differences come from your change, not chance.
+`--telemetry DIR` writes one CSV per car at the robot rate.
+
+## Helpers in `bots/common`
+
+- `rr_params.h`: read numbers out of the params string.
+- `rr_recovery.h`: drop-in "get unstuck" behaviour (U-turn when facing the
+  wrong way, reverse out of a barrier). Call `rr_recover()` first in `drive()`.
+
+## The example robots
+
+| Robot | Language | Uses | Idea |
+|---|---|---|---|
+| `simple` | C | SCR sensors only | align with the track axis, target speed from the free distance ahead (never pits) |
+| `gapfollow` | C++ | SCR sensors only | steer towards the longest forward range finder, dodge cars ahead (never pits) |
+| `racingline` | C++ | track geometry + pose + nearby cars | minimum-curvature line, friction-limited speed profile re-planned for fuel and tyres, pure pursuit, pit strategy, overtaking and defending |

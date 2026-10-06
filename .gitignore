@@ -1,0 +1,5 @@
+build/
+build-*/
+*.csv
+*.json
+!*.trk

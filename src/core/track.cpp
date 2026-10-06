@@ -1,0 +1,357 @@
+#include "track.hpp"
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+
+namespace rr {
+
+namespace {
+
+// Centripetal Catmull-Rom point between p1 and p2 (u in [0,1]).
+Vec2 catmullRom(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, float u) {
+    auto knot = [](float t, Vec2 a, Vec2 b) {
+        float d = length(b - a);
+        return t + std::max(std::sqrt(d), 1e-4f);
+    };
+    float t0 = 0, t1 = knot(t0, p0, p1), t2 = knot(t1, p1, p2), t3 = knot(t2, p2, p3);
+    float t = t1 + (t2 - t1) * u;
+    Vec2 a1 = p0 * ((t1 - t) / (t1 - t0)) + p1 * ((t - t0) / (t1 - t0));
+    Vec2 a2 = p1 * ((t2 - t) / (t2 - t1)) + p2 * ((t - t1) / (t2 - t1));
+    Vec2 a3 = p2 * ((t3 - t) / (t3 - t2)) + p3 * ((t - t2) / (t3 - t2));
+    Vec2 b1 = a1 * ((t2 - t) / (t2 - t0)) + a2 * ((t - t0) / (t2 - t0));
+    Vec2 b2 = a2 * ((t3 - t) / (t3 - t1)) + a3 * ((t - t1) / (t3 - t1));
+    return b1 * ((t2 - t) / (t2 - t1)) + b2 * ((t - t1) / (t2 - t1));
+}
+
+}  // namespace
+
+bool Track::load(const std::string& path, std::string* err) {
+    std::ifstream in(path);
+    if (!in) {
+        if (err) *err = "cannot open track file " + path;
+        return false;
+    }
+    std::vector<Vec2> ctrl;
+    std::vector<float> widths;
+    std::string line;
+    int lineNo = 0;
+    while (std::getline(in, line)) {
+        ++lineNo;
+        auto hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        std::istringstream ss(line);
+        std::string key;
+        if (!(ss >> key)) continue;
+        if (key == "name") {
+            std::getline(ss >> std::ws, name_);
+        } else if (key == "width") {
+            ss >> defaultWidth_;
+        } else if (key == "runoff") {
+            ss >> runoff_;
+        } else if (key == "pit") {
+            std::string side;
+            if (!(ss >> side >> pitCfg_.entry_s >> pitCfg_.lane_start_s >> pitCfg_.lane_end_s >> pitCfg_.exit_s) ||
+                (side != "left" && side != "right")) {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'pit left|right entry lane_start lane_end exit'";
+                return false;
+            }
+            pitCfg_.has_pit = 1;
+            pitCfg_.side = side == "left" ? 1 : -1;
+        } else if (key == "pitspeed") {
+            ss >> pitCfg_.speed_limit;
+        } else if (key == "p") {
+            float x, y, w = -1;
+            if (!(ss >> x >> y)) {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'p x y [width]'";
+                return false;
+            }
+            ss >> w;
+            ctrl.push_back({x, y});
+            widths.push_back(w);
+        } else {
+            if (err) *err = path + ":" + std::to_string(lineNo) + ": unknown key '" + key + "'";
+            return false;
+        }
+    }
+    for (auto& w : widths)
+        if (w <= 0) w = defaultWidth_;
+    return build(ctrl, widths, err);
+}
+
+bool Track::build(const std::vector<Vec2>& ctrl, const std::vector<float>& widths, std::string* err) {
+    const int n = (int)ctrl.size();
+    if (n < 4) {
+        if (err) *err = "a track needs at least 4 control points";
+        return false;
+    }
+    // 1. Dense spline polyline.
+    std::vector<Vec2> dense;
+    std::vector<float> denseW;
+    for (int i = 0; i < n; ++i) {
+        Vec2 p0 = ctrl[(i - 1 + n) % n], p1 = ctrl[i], p2 = ctrl[(i + 1) % n], p3 = ctrl[(i + 2) % n];
+        float w1 = widths[i], w2 = widths[(i + 1) % n];
+        int steps = std::max(16, (int)(rr::length(p2 - p1) / 0.25f));
+        for (int k = 0; k < steps; ++k) {
+            float u = (float)k / steps;
+            dense.push_back(catmullRom(p0, p1, p2, p3, u));
+            // smoothstep the width so width changes do not kink the edges
+            float su = u * u * (3 - 2 * u);
+            denseW.push_back(w1 + (w2 - w1) * su);
+        }
+    }
+    // 2. Resample by arc length.
+    std::vector<float> cum(dense.size() + 1, 0.0f);
+    for (size_t i = 0; i < dense.size(); ++i)
+        cum[i + 1] = cum[i] + rr::length(dense[(i + 1) % dense.size()] - dense[i]);
+    const float total = cum.back();
+    const int count = std::max(16, (int)std::lround(total / 1.0f));
+    ds_ = total / count;
+    length_ = total;
+    samples_.assign(count, {});
+    size_t j = 0;
+    for (int i = 0; i < count; ++i) {
+        float s = i * ds_;
+        while (j + 1 < cum.size() - 1 && cum[j + 1] < s) ++j;
+        float segLen = cum[j + 1] - cum[j];
+        float f = segLen > 1e-6f ? (s - cum[j]) / segLen : 0.0f;
+        Vec2 a = dense[j], b = dense[(j + 1) % dense.size()];
+        float wa = denseW[j], wb = denseW[(j + 1) % dense.size()];
+        samples_[i].p = a + (b - a) * f;
+        samples_[i].halfWidth = 0.5f * (wa + (wb - wa) * f);
+        samples_[i].s = s;
+    }
+    finalize();
+    return true;
+}
+
+void Track::finalize() {
+    const int n = size();
+    for (int i = 0; i < n; ++i) {
+        Vec2 d = at(i + 1).p - at(i - 1).p;
+        samples_[i].t = normalize(d);
+        samples_[i].n = perpLeft(samples_[i].t);
+    }
+    std::vector<float> raw(n);
+    for (int i = 0; i < n; ++i) {
+        float a0 = std::atan2(at(i - 1).t.y, at(i - 1).t.x);
+        float a1 = std::atan2(at(i + 1).t.y, at(i + 1).t.x);
+        raw[i] = wrapAngle(a1 - a0) / (2 * ds_);
+    }
+    const int k = 3;  // box filter radius
+    for (int i = 0; i < n; ++i) {
+        float sum = 0;
+        for (int o = -k; o <= k; ++o) sum += raw[wrap(i + o)];
+        samples_[i].curvature = sum / (2 * k + 1);
+    }
+
+    // Sanity checks: edges folding over in tight corners, and parts of the
+    // track overlapping each other.
+    warnings_.clear();
+    for (int i = 0; i < n; ++i) {
+        const auto& s = samples_[i];
+        if (std::fabs(s.curvature) * s.halfWidth > 0.95f) {
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "corner at s=%.0f m is tighter (r=%.1f m) than the half width (%.1f m)",
+                          s.s, 1.0f / std::fabs(s.curvature), s.halfWidth);
+            warnings_.push_back(buf);
+            break;
+        }
+    }
+    for (int i = 0; i < n && warnings_.size() < 4; i += 2) {
+        for (int j = i + 1; j < n; j += 2) {
+            const auto& a = samples_[i];
+            const auto& b = samples_[j];
+            float arc = std::min(b.s - a.s, length_ - (b.s - a.s));
+            float minDist = a.halfWidth + b.halfWidth + 2.0f;
+            if (arc < 2.5f * minDist + 10.0f) continue;
+            if (rr::length(a.p - b.p) < minDist) {
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "track overlaps itself near s=%.0f m and s=%.0f m", a.s, b.s);
+                warnings_.push_back(buf);
+                i += 50;
+                break;
+            }
+        }
+    }
+
+    apiPoints_.resize(n);
+    for (int i = 0; i < n; ++i) {
+        const auto& s = samples_[i];
+        apiPoints_[i] = {s.p.x, s.p.y, s.t.x, s.t.y, s.s, s.halfWidth, s.curvature};
+    }
+    info_.name = name_.c_str();
+    info_.length = length_;
+    info_.runoff = runoff_;
+    info_.num_points = n;
+    info_.points = apiPoints_.data();
+    info_.pit = pitCfg_;
+    if (info_.pit.has_pit) {
+        auto wrapS = [&](float v) { v = std::fmod(v, length_); return v < 0 ? v + length_ : v; };
+        RRPitInfo& p = info_.pit;
+        p.entry_s = wrapS(p.entry_s);
+        p.lane_start_s = wrapS(p.lane_start_s);
+        p.lane_end_s = wrapS(p.lane_end_s);
+        p.exit_s = wrapS(p.exit_s);
+        float hw = at(indexAt(p.lane_start_s)).halfWidth;
+        p.lane_offset = p.side * (hw + kLaneCentre);
+        p.box_offset = p.side * (hw + kBoxCentre);
+        if (p.speed_limit <= 0) p.speed_limit = 22.0f;
+        if (runoff_ > kPitBarrier) warnings_.push_back("runoff is wider than the pit area; the pit barrier will stick out");
+    }
+    buildEdgeGrid();
+}
+
+bool Track::inSpan(float s, float a, float b) const {
+    auto w = [&](float v) { v = std::fmod(v, length_); return v < 0 ? v + length_ : v; };
+    s = w(s); a = w(a); b = w(b);
+    return a <= b ? (s >= a && s <= b) : (s >= a || s <= b);
+}
+
+bool Track::inPitArea(float s) const { return hasPit() && inSpan(s, info_.pit.entry_s, info_.pit.exit_s); }
+bool Track::inPitLane(float s) const { return hasPit() && inSpan(s, info_.pit.lane_start_s, info_.pit.lane_end_s); }
+
+float Track::barrierOffset(float s, int side, float halfWidth) const {
+    if (side == info_.pit.side && inPitArea(s)) return halfWidth + kPitBarrier;
+    return halfWidth + runoff_;
+}
+
+bool Track::paved(float s, float lateral, float halfWidth) const {
+    float a = std::fabs(lateral);
+    if (a <= halfWidth + 1.2f) return true;
+    int side = lateral > 0 ? 1 : -1;
+    return side == info_.pit.side && inPitArea(s) && a <= halfWidth + kPitBarrier;
+}
+
+int Track::indexAt(float s) const {
+    s = std::fmod(s, length_);
+    if (s < 0) s += length_;
+    return wrap((int)(s / ds_));
+}
+
+TrackLoc Track::locate(Vec2 p, int hint, int window) const {
+    float best = 1e30f;
+    TrackLoc loc;
+    for (int k = -window; k <= window; ++k) {
+        int i = wrap(hint + k);
+        const auto& a = samples_[i];
+        const auto& b = at(i + 1);
+        Vec2 ab = b.p - a.p;
+        float len2 = dot(ab, ab);
+        float t = len2 > 0 ? clampf(dot(p - a.p, ab) / len2, 0, 1) : 0;
+        Vec2 proj = a.p + ab * t;
+        Vec2 d = p - proj;
+        float d2 = dot(d, d);
+        if (d2 < best) {
+            best = d2;
+            Vec2 nrm = normalize(a.n * (1 - t) + b.n * t);
+            loc.idx = i;
+            loc.s = a.s + t * ds_;
+            if (loc.s >= length_) loc.s -= length_;
+            loc.lateral = dot(d, nrm);
+            loc.halfWidth = a.halfWidth + (b.halfWidth - a.halfWidth) * t;
+        }
+    }
+    return loc;
+}
+
+TrackLoc Track::locateGlobal(Vec2 p) const {
+    // Coarse pass then refine.
+    int bestI = 0;
+    float best = 1e30f;
+    for (int i = 0; i < size(); i += 4) {
+        Vec2 d = p - samples_[i].p;
+        float d2 = dot(d, d);
+        if (d2 < best) { best = d2; bestI = i; }
+    }
+    return locate(p, bestI, 6);
+}
+
+Vec2 Track::pointAt(float s, float lateral) const {
+    s = std::fmod(s, length_);
+    if (s < 0) s += length_;
+    int i = wrap((int)(s / ds_));
+    float f = (s - samples_[i].s) / ds_;
+    const auto& a = samples_[i];
+    const auto& b = at(i + 1);
+    Vec2 c = a.p + (b.p - a.p) * f;
+    Vec2 nrm = normalize(a.n * (1 - f) + b.n * f);
+    return c + nrm * lateral;
+}
+
+Vec2 Track::dirAt(float s) const {
+    s = std::fmod(s, length_);
+    if (s < 0) s += length_;
+    int i = wrap((int)(s / ds_));
+    float f = (s - samples_[i].s) / ds_;
+    return normalize(samples_[i].t * (1 - f) + at(i + 1).t * f);
+}
+
+void Track::buildEdgeGrid() {
+    float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
+    for (int i = 0; i < size(); ++i)
+        for (Vec2 p : {leftEdge(i), rightEdge(i)}) {
+            minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+            minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+        }
+    gridX0_ = minX - gridCell_;
+    gridY0_ = minY - gridCell_;
+    gridW_ = (int)((maxX - gridX0_) / gridCell_) + 2;
+    gridH_ = (int)((maxY - gridY0_) / gridCell_) + 2;
+    std::vector<std::vector<int>> cells((size_t)gridW_ * gridH_);
+    auto insert = [&](Vec2 a, Vec2 b, int item) {
+        int x0 = (int)((std::min(a.x, b.x) - gridX0_) / gridCell_), x1 = (int)((std::max(a.x, b.x) - gridX0_) / gridCell_);
+        int y0 = (int)((std::min(a.y, b.y) - gridY0_) / gridCell_), y1 = (int)((std::max(a.y, b.y) - gridY0_) / gridCell_);
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) cells[(size_t)y * gridW_ + x].push_back(item);
+    };
+    for (int i = 0; i < size(); ++i) {
+        insert(leftEdge(i), leftEdge(i + 1), i);
+        insert(rightEdge(i), rightEdge(i + 1), ~i);
+    }
+    gridStart_.assign(cells.size() + 1, 0);
+    gridItems_.clear();
+    for (size_t c = 0; c < cells.size(); ++c) {
+        gridStart_[c] = (int)gridItems_.size();
+        gridItems_.insert(gridItems_.end(), cells[c].begin(), cells[c].end());
+    }
+    gridStart_[cells.size()] = (int)gridItems_.size();
+}
+
+float Track::raycastEdge(Vec2 o, Vec2 dir, float maxRange) const {
+    float best = maxRange;
+    auto test = [&](int item) {
+        int i = item >= 0 ? item : ~item;
+        Vec2 a = item >= 0 ? leftEdge(i) : rightEdge(i);
+        Vec2 b = item >= 0 ? leftEdge(i + 1) : rightEdge(i + 1);
+        Vec2 e = b - a;
+        float den = cross(dir, e);
+        if (std::fabs(den) < 1e-9f) return;
+        Vec2 ao = a - o;
+        float u = cross(ao, e) / den;    // along the ray
+        float v = cross(ao, dir) / den;  // along the segment
+        if (u > 1e-4f && u < best && v >= 0.0f && v <= 1.0f) best = u;
+    };
+    // Walk the grid cells along the ray (Amanatides & Woo).
+    float fx = (o.x - gridX0_) / gridCell_, fy = (o.y - gridY0_) / gridCell_;
+    int cx = (int)std::floor(fx), cy = (int)std::floor(fy);
+    int stepX = dir.x > 0 ? 1 : -1, stepY = dir.y > 0 ? 1 : -1;
+    float tDeltaX = std::fabs(dir.x) > 1e-9f ? gridCell_ / std::fabs(dir.x) : 1e30f;
+    float tDeltaY = std::fabs(dir.y) > 1e-9f ? gridCell_ / std::fabs(dir.y) : 1e30f;
+    float tMaxX = std::fabs(dir.x) > 1e-9f ? ((dir.x > 0 ? (cx + 1 - fx) : (fx - cx)) * gridCell_) / std::fabs(dir.x) : 1e30f;
+    float tMaxY = std::fabs(dir.y) > 1e-9f ? ((dir.y > 0 ? (cy + 1 - fy) : (fy - cy)) * gridCell_) / std::fabs(dir.y) : 1e30f;
+    float t = 0;
+    while (t < best) {
+        if (cx < 0 || cy < 0 || cx >= gridW_ || cy >= gridH_) break;
+        size_t c = (size_t)cy * gridW_ + cx;
+        for (int k = gridStart_[c]; k < gridStart_[c + 1]; ++k) test(gridItems_[k]);
+        // a hit inside this cell cannot be beaten by later cells
+        if (tMaxX < tMaxY) { t = tMaxX; tMaxX += tDeltaX; cx += stepX; }
+        else { t = tMaxY; tMaxY += tDeltaY; cy += stepY; }
+    }
+    return best;
+}
+
+}  // namespace rr

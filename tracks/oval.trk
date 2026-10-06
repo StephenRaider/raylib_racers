@@ -1,0 +1,19 @@
+# Raylib Racers: a fast oval with two banked-feeling (but flat) bends.
+name Oval
+width 16
+runoff 8
+# Pit lane on the inside of the front straight.
+pit left 10 60 380 460
+pitspeed 22
+p 0 0
+p 250 0
+p 500 0
+p 640 40
+p 690 150
+p 640 260
+p 500 300
+p 250 300
+p 0 300
+p -140 260
+p -190 150
+p -140 40

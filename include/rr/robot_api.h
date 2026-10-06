@@ -1,0 +1,237 @@
+/*
+ * Raylib Racers - robot (driver) plugin API
+ *
+ * A robot is a shared library (.so / .dll / .dylib) that exports one C function:
+ *
+ *     RR_EXPORT const RRRobotApi* rr_robot_entry(void);
+ *
+ * The host calls create() once per car driven by the robot, then drive() at a
+ * fixed rate (50 Hz by default) and destroy() at the end of the race. The same
+ * library can drive several cars at once; keep all state in the instance
+ * pointer returned by create(), not in globals.
+ *
+ * The sensor model follows TORCS / the Simulated Car Racing (SCR) championship:
+ * angle to the track axis, normalised lateral position, 19 track-edge
+ * range finders and 36 opponent sectors. On top of that the robot gets the full
+ * track geometry at create() time and its world pose, like a TORCS robot does,
+ * so it can plan racing lines.
+ *
+ * Plain C99 so robots can be written in C, C++ or anything with a C FFI.
+ *
+ * Conventions: SI units (m, s, rad, kg). World frame is a flat x/y plane, yaw is
+ * counter-clockwise from +x. Car body frame: x forward, y to the left.
+ * Positive steering turns left.
+ */
+#ifndef RR_ROBOT_API_H
+#define RR_ROBOT_API_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define RR_ABI_VERSION 2
+
+#define RR_NUM_TRACK_SENSORS 19
+#define RR_NUM_OPPONENT_SENSORS 36
+#define RR_SENSOR_RANGE 200.0f
+#define RR_MAX_GEARS 8
+#define RR_NUM_DEBUG 8
+#define RR_MAX_NEARBY 8
+
+/* Tyre compounds: softer is grippier but wears faster.
+ * New-tyre grip: soft x1.035, medium x1.0, hard x0.975.
+ * Wear rate:     soft x1.7,   medium x1.0, hard x0.6.
+ * Worn grip: 1 - 0.07 * wear, falling off a cliff past wear 0.7 (-0.8 per unit beyond). */
+#define RR_TIRE_SOFT 1
+#define RR_TIRE_MEDIUM 2
+#define RR_TIRE_HARD 3
+
+/* RRSensors.pit_state */
+#define RR_PIT_NONE 0        /* racing */
+#define RR_PIT_LANE 1        /* in the pit lane (speed limited) */
+#define RR_PIT_SERVICE 2     /* stopped in the box, crew working: controls are ignored */
+#define RR_PIT_DONE 3        /* service finished, still in the pit lane */
+
+#if defined(_WIN32)
+#define RR_EXPORT __declspec(dllexport)
+#else
+#define RR_EXPORT __attribute__((visibility("default")))
+#endif
+
+/* One sample of the track centreline. Samples are spaced roughly 1 m apart and
+ * the track is closed: the sample after the last one is sample 0. */
+typedef struct RRTrackPoint {
+    float x, y;          /* centreline position */
+    float dir_x, dir_y;  /* unit tangent in race direction */
+    float s;             /* distance from the start line along the centreline */
+    float half_width;    /* half the tarmac width; edges at +/- half_width along the left normal (-dir_y, dir_x) */
+    float curvature;     /* signed, 1/m, positive = turning left */
+} RRTrackPoint;
+
+/* The pit lane runs alongside the track on one side. Distances are along the
+ * track centreline (s, may wrap past the start line); lateral offsets are
+ * signed like track_pos (+ = left of the centreline), in metres.
+ *
+ *   entry_s ... lane_start_s : leave the track and move into the lane
+ *   lane_start_s ... lane_end_s : the lane proper, behind a wall, speed limited
+ *   lane_end_s ... exit_s : rejoin the track
+ */
+typedef struct RRPitInfo {
+    int has_pit;
+    int side;              /* +1 left of the track, -1 right */
+    float entry_s, lane_start_s, lane_end_s, exit_s;
+    float lane_offset;     /* lateral centre of the fast lane */
+    float box_offset;      /* lateral centre of the pit boxes */
+    float speed_limit;     /* m/s, enforced between lane_start_s and lane_end_s */
+} RRPitInfo;
+
+typedef struct RRTrackInfo {
+    const char* name;
+    float length;        /* centreline length, m */
+    float runoff;        /* distance from tarmac edge to the barrier, m */
+    int num_points;
+    const RRTrackPoint* points;
+    RRPitInfo pit;
+} RRTrackInfo;
+
+typedef struct RRCarSpec {
+    float mass;              /* kg, with driver */
+    float length, width;     /* body size, m */
+    float wheelbase;         /* m */
+    float cg_to_front;       /* CG to front axle, m */
+    float cg_to_rear;        /* CG to rear axle, m */
+    float max_steer;         /* road-wheel angle at steer = 1, rad */
+    float tire_mu;           /* peak tyre friction coefficient on tarmac */
+    float drag_coeff;        /* 0.5 * rho * Cd * A, so drag force = drag_coeff * v^2 (N) */
+    float downforce_coeff;   /* 0.5 * rho * Cl * A, so downforce = downforce_coeff * v^2 (N) */
+    float max_rpm;
+    float wheel_radius;      /* m */
+    float final_drive;
+    int num_gears;           /* forward gears */
+    float gear_ratios[RR_MAX_GEARS]; /* [0] = 1st gear */
+    float max_brake_force;   /* N, total over all wheels */
+    float fuel_capacity;     /* litres */
+    float fuel_density;      /* kg per litre: fuel adds fuel * fuel_density to the mass */
+} RRCarSpec;
+
+/* A nearby car, for racecraft (overtaking, defending, pit timing). */
+typedef struct RROpponent {
+    int car_index;
+    int race_pos;
+    float ds;            /* track distance from us to them, + = ahead, wrapped to (-length/2, length/2] */
+    float lateral;       /* their offset from the centreline, m, + = left */
+    float speed;         /* their speed along their heading, m/s */
+    float rel_x, rel_y;  /* their position in our body frame, m (x forward, y left) */
+    float rel_yaw;       /* their heading minus ours, rad */
+    int pit_state;
+    int laps_ahead;      /* their completed laps minus ours */
+} RROpponent;
+
+/* Optional setup a robot can change inside create(). The host fills defaults
+ * before calling create(). */
+typedef struct RRRobotConfig {
+    /* Directions of the 19 track range finders, degrees relative to the car
+     * heading, positive to the left. Default: -90 -75 -60 -45 -30 -20 -15 -10 -5
+     * 0 5 10 15 20 30 45 60 75 90 (the SCR default, mirrored to our left-positive
+     * convention). */
+    float track_sensor_angles[RR_NUM_TRACK_SENSORS];
+    int auto_gear;       /* 1 (default): the host shifts gears; 0: robot sets RRControl.gear */
+    float initial_fuel;  /* litres at the start (default: full tank) */
+    int tire_compound;   /* starting tyres, RR_TIRE_* (default medium) */
+} RRRobotConfig;
+
+typedef struct RRSensors {
+    double time;          /* race time, s */
+    float dt;             /* time since the previous drive() call, s */
+
+    /* SCR-style sensors */
+    float angle;          /* car heading minus track direction, rad, in (-pi, pi]; positive = pointing left of the track axis */
+    float track_pos;      /* 0 on the centreline, +1 at the left tarmac edge, -1 at the right; |x| > 1 means off the tarmac */
+    float track[RR_NUM_TRACK_SENSORS];        /* distance to the tarmac edge along each range finder, m (max RR_SENSOR_RANGE); -1 when off the tarmac */
+    float opponents[RR_NUM_OPPONENT_SENSORS]; /* nearest opponent in each 10 degree sector, m (RR_SENSOR_RANGE if none). Sector i covers [-180 + 10i, -170 + 10i) degrees, 0 = straight ahead, positive = left */
+    float speed_x;        /* longitudinal speed, m/s */
+    float speed_y;        /* lateral speed, m/s, positive = sliding left */
+    float yaw_rate;       /* rad/s */
+    float rpm;
+    int gear;             /* -1 reverse, 0 neutral, 1..num_gears */
+    float wheel_spin;     /* how far the driven (rear) tyres are past their grip limit: 0 = gripping, 0.2 = asking 20% more than they can give */
+    float damage;         /* accumulated collision damage, arbitrary units; costs downforce (up to 35% at 8000), repaired in the pits */
+
+    /* race state */
+    float dist_from_start;  /* distance along the centreline since the start line on this lap, m */
+    float dist_raced;       /* total distance covered since the start, m (negative on the grid behind the line) */
+    int lap;                /* current lap, 1-based */
+    int race_laps;          /* laps in the race */
+    int race_pos;           /* 1 = leader */
+    int num_cars;
+    float cur_lap_time;
+    float last_lap_time;    /* 0 until a lap is completed */
+    float best_lap_time;    /* 0 until a lap is completed */
+
+    /* ground truth (TORCS robots have this too) */
+    float x, y, yaw;        /* world pose */
+    int track_index;        /* nearest RRTrackPoint */
+    int on_track;           /* 1 if on the tarmac */
+
+    /* consumables */
+    float fuel;             /* litres left; at 0 the engine stops */
+    float tire_wear[2];     /* front, rear: 0 new .. 1 worn out */
+    float tire_grip;        /* current grip multiplier from compound and wear (1 = new medium) */
+    int tire_compound;      /* RR_TIRE_* */
+    int laps_on_tires;
+
+    /* pit */
+    int pit_state;          /* RR_PIT_* */
+    int pit_stops;          /* completed stops */
+    float pit_box_s;        /* where this car's box is (track s) */
+    float service_time_left;/* s, while RR_PIT_SERVICE */
+
+    /* other cars, nearest first by track distance */
+    int num_nearby;
+    RROpponent nearby[RR_MAX_NEARBY];
+} RRSensors;
+
+typedef struct RRControl {
+    float steer;      /* -1 (full right) .. +1 (full left) */
+    float accel;      /* 0 .. 1 */
+    float brake;      /* 0 .. 1 */
+    int gear;         /* used only when auto_gear = 0, or -1 to request reverse in auto mode */
+    /* Free-form debug output: shown in the viewer HUD and written to telemetry. */
+    char status[64];
+    float debug[RR_NUM_DEBUG];
+
+    /* Pit stop request. Keep pit_request set while driving to the box; the
+     * crew starts work once the car stops in its box (within ~2.5 m) and
+     * reads the fields below at that moment. */
+    int pit_request;
+    float pit_fuel;   /* litres to add (clamped to the tank) */
+    int pit_tires;    /* 0 keep the tyres, or RR_TIRE_* to fit a new set */
+    int pit_repair;   /* 1 to repair damage (adds time) */
+} RRControl;
+
+typedef struct RRRobotApi {
+    int abi_version;      /* must be RR_ABI_VERSION */
+    const char* name;
+    const char* author;
+
+    /* params: the string given with --params on the command line, "" if none
+     * (by convention "key=value,key=value"). Return NULL to refuse the car. */
+    void* (*create)(const RRTrackInfo* track, const RRCarSpec* car, int car_index,
+                    const char* params, RRRobotConfig* config);
+    /* control arrives zeroed except gear, which holds the current gear. */
+    void (*drive)(void* self, const RRSensors* sensors, RRControl* control);
+    void (*destroy)(void* self);
+    /* Optional, may be NULL: a polyline for the viewer to draw, such as the
+     * planned path. Write up to max_points (x, y) pairs into xy and return how
+     * many were written. Called from the render loop, never during drive(). */
+    int (*debug_path)(void* self, float* xy, int max_points);
+} RRRobotApi;
+
+typedef const RRRobotApi* (*RRRobotEntryFn)(void);
+#define RR_ROBOT_ENTRY_SYMBOL "rr_robot_entry"
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* RR_ROBOT_API_H */
