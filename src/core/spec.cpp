@@ -1,5 +1,6 @@
 #include "spec.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -72,8 +73,9 @@ bool loadDevRules(const std::string& path, DevRules& out, std::string* err) {
     if (!readJson(path, v, err)) return false;
     DevRules r;
     r.budget = (int)v["budget"].num(0);
-    r.minTokens = (int)v["min_tokens"].num(0);
-    r.maxTokens = (int)v["max_tokens"].num(5);
+    r.minPoints = (int)v["min"].num(0);
+    r.maxPoints = (int)v["max"].num(10);
+    r.neutral = (int)v["neutral"].num(5);
     CarParams probe;
     for (const auto& c : v["categories"].arr) {
         DevCategory cat;
@@ -98,7 +100,7 @@ bool loadDevRules(const std::string& path, DevRules& out, std::string* err) {
 }
 
 bool parseDevelopment(const DevRules& rules, const std::string& dev, std::vector<int>& tokens, std::string* err) {
-    tokens.assign(rules.categories.size(), 0);
+    tokens.assign(rules.categories.size(), rules.neutral);
     std::stringstream ss(dev);
     std::string item;
     int spent = 0;
@@ -113,16 +115,16 @@ bool parseDevelopment(const DevRules& rules, const std::string& dev, std::vector
             if (err) *err = "unknown development category '" + key + "'";
             return false;
         }
-        if (n < rules.minTokens || n > rules.maxTokens) {
-            if (err) *err = "development '" + key + "' must be between " + std::to_string(rules.minTokens) + " and " +
-                            std::to_string(rules.maxTokens) + " tokens";
+        if (n < rules.minPoints || n > rules.maxPoints) {
+            if (err) *err = "development '" + key + "' must be between " + std::to_string(rules.minPoints) + " and " +
+                            std::to_string(rules.maxPoints);
             return false;
         }
         tokens[k] = n;
     }
     for (int t : tokens) spent += t;
     if (spent > rules.budget) {
-        if (err) *err = "development spends " + std::to_string(spent) + " tokens, the budget is " + std::to_string(rules.budget);
+        if (err) *err = "development spends " + std::to_string(spent) + " points, the budget is " + std::to_string(rules.budget);
         return false;
     }
     return true;
@@ -131,7 +133,7 @@ bool parseDevelopment(const DevRules& rules, const std::string& dev, std::vector
 void applyDevelopment(const DevRules& rules, const std::vector<int>& tokens, CarParams& p) {
     for (size_t k = 0; k < rules.categories.size() && k < tokens.size(); ++k)
         for (const auto& e : rules.categories[k].effects)
-            if (float* f = p.field(e.field)) *f *= std::pow(1.0f + e.perToken, (float)tokens[k]);
+            if (float* f = p.field(e.field)) *f *= std::max(0.05f, 1.0f + e.perPoint * (float)(tokens[k] - rules.neutral));
 }
 
 }  // namespace rr

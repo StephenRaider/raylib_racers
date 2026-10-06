@@ -151,23 +151,42 @@ A car about to be lapped gets a blue flag when the lapping car is within 60 m
 time penalty (once per lapping car), added to the race time. The timing tower shows blue-flagged
 cars in blue and the car panel says who to let by.
 
-## Car specs and development
+## Car specs and team stats
 
 Car numbers are data: `specs/f1_2006.json` lists every physics parameter of
 the built-in car (any field left out keeps the default), and
-`--spec FILE|NAME` gives a car another spec. `specs/development.json` defines
-development categories (top speed, downforce, handling, engine, tyre
-management, fuel efficiency, pit crew), what one token in each changes, the
-token budget (10) and the per-category range (-3 to 5; negative tokens trade a
-category down to pay for others). `--dev "top_speed=4,downforce=-2,pit_crew=3"`
-develops one car; over-budget or unknown categories are errors. The car's
-spec reaches its robot through `RRCarSpec`, so planners adapt to it. This is
-the base for championships with asymmetric cars; the menu does not expose it
-yet.
+`--spec FILE|NAME` gives a car another spec.
+
+On top of the spec, each team rates its car in eight stats from 0 to 10, where
+5 is the stock car and a team has 40 points in all, so raising one stat means
+lowering another. `specs/development.json` defines them. Each point away from
+5 changes the car linearly:
+
+| Stat | Per point | 0 to 10 is worth |
+|---|---|---|
+| Tyre management | wear -5%, sliding heat -2% | tyre wear from +25% to -25% |
+| Top speed | drag -0.8% | about 0.3 s a lap |
+| Acceleration | engine torque +0.9% | about 0.25 s a lap |
+| Downforce | downforce +0.6%, drag +0.2% | about 0.25 s a lap |
+| Handling | mechanical grip +0.15%, yaw inertia -0.4% | about 0.3 s a lap |
+| Pit stop speed | service time -4% | stops 20% longer to 20% shorter |
+| Fuel efficiency | fuel per lap -1.6% | fuel use from +8% to -8% |
+| Brakes | brake force +3% | little on Circuit Raylib, which has few big stops |
+
+The lap times are on Circuit Raylib, so a full 0-to-10 swing in one stat is a
+few tenths a lap, the gap between neighbouring top teams.
+`--dev "top_speed=8,downforce=3"` sets one car's stats (stats left out stay at
+5); over 40 points, outside 0-10 or an unknown stat is an error. The car's
+spec reaches its robot through `RRCarSpec`, so planners adapt to it.
+
+In the viewer the **Team stats** page edits each team's stats. Teammates share
+them, and choosing a driving style for a driver on the Grid page gives the team
+that style's stats (the aggressive racingline wants tyre management, the steady
+one spends on speed). **Drivers per team** races one or two cars per team.
 
 ```sh
-./build/rr_race --laps 10 --car racingline --dev "top_speed=5,downforce=-3" \
-                          --car racingline --dev "downforce=5,top_speed=-3"
+./build/rr_race --laps 25 --car racingline --dev "top_speed=8,handling=8,tire_management=2,pit_stop=2" \
+                          --car racingline --dev "tire_management=8,fuel_efficiency=7,top_speed=3,downforce=2"
 ```
 
 ## Writing a robot

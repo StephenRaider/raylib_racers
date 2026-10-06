@@ -422,9 +422,13 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
         drawGridPage(m, hits);
         return;
     }
+    if (m.teamsPage) {
+        drawTeamsPage(m, hits);
+        return;
+    }
     const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.35f));
-    const float w = 720, rowH = 64, h = 150 + MenuState::kRows * rowH + 50;
+    const float w = 720, rowH = 60, h = 130 + MenuState::kRows * rowH + 50;
     const float x = (sw - w) / 2, y = std::max(20.0f, (sh - h) / 2);
     panel({x, y, w, h}, 0.88f);
     text("RAYLIB RACERS", x + 32, y + 26, 20, kAccent, true);
@@ -432,7 +436,7 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
 
     const TrackStats& ts = m.stats();
     char val[96], note[160];
-    float ry = y + 120;
+    float ry = y + 104;
     for (int row = 0; row < MenuState::kRows; ++row, ry += rowH) {
         const bool sel = row == m.row;
         const Rectangle r = {x + 20, ry, w - 40, rowH - 8};
@@ -446,7 +450,8 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
             continue;
         }
         if (sel) DrawRectangleRounded(r, 0.2f, 8, Fade(WHITE, 0.08f));
-        static const char* labels[] = {"Track", "Race length", "Tyre life", "Cars", "Session", "Tyre rule", "Grid"};
+        static const char* labels[] = {"Track",   "Race length", "Tyre life", "Teams",     "Drivers per team",
+                                       "Session", "Tyre rule",   "Grid",      "Team stats"};
         const char* label = labels[row];
         note[0] = 0;
         switch (row) {
@@ -478,9 +483,22 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
                 }
                 break;
             }
-            case 3:
-                std::snprintf(val, sizeof val, "%d", m.cars);
-                std::snprintf(note, sizeof note, "%d teams of two", (m.liveryCount + 1) / 2);
+            case MenuState::kTeamsRow:
+                if (m.teamSlots.empty()) {
+                    std::snprintf(val, sizeof val, "%d cars", m.cars);
+                } else {
+                    std::snprintf(val, sizeof val, "%d", m.teams);
+                    std::snprintf(note, sizeof note, "%d cars on the grid", m.cars);
+                }
+                break;
+            case MenuState::kDriversRow:
+                std::snprintf(val, sizeof val, "%d", m.drivers);
+                std::snprintf(note, sizeof note, "%s", m.drivers == 1 ? "one car per team" : "teammates share the team's stats");
+                break;
+            case MenuState::kStatsRow:
+                std::snprintf(val, sizeof val, "Edit");
+                std::snprintf(note, sizeof note, "%d points per team over %d stats; each driver's style sets its team's",
+                              m.statRules.budget, (int)m.statRules.keys.size());
                 break;
             case MenuState::kSessionRow:
                 std::snprintf(val, sizeof val, "%s", m.weekend ? "Weekend" : "Race only");
@@ -522,7 +540,7 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
     const int perCol = n > 10 ? (n + 1) / 2 : n;
     const int cols = n > 10 ? 2 : 1;
     const float colW = 740, rowH = 34;
-    const float w = cols * colW + 40, h = 130 + perCol * rowH + 70;
+    const float w = cols * colW + 40, h = 130 + perCol * rowH + 100;
     const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
     panel({x, y, w, h}, 0.9f);
     text("RACE SETUP", x + 28, y + 22, 18, kAccent, true);
@@ -586,6 +604,70 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
     text("DONE", b.x + (b.width - width("DONE", 20, true)) / 2, b.y + 9, 20, Color{20, 20, 24, 255}, true);
     hits.push_back({b.x, b.y, b.width, b.height, 99, 0});
     const char* help = "Up/Down car    Tab livery / algorithm / tyres    Left/Right change (a livery in use swaps)    Enter done";
+    text(help, x + 28, y + h - 86, 15, kDim);
+}
+
+void Hud::drawTeamsPage(const MenuState& m, std::vector<MenuHit>& hits) {
+    const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.45f));
+    const std::vector<int> teams = m.raceTeams();
+    const StatRules& r = m.statRules;
+    const int ns = (int)r.keys.size();
+    const float nameW = 250, cellW = 118, rowH = 40, leftW = 90;
+    const float w = 40 + nameW + ns * cellW + leftW, h = 150 + teams.size() * rowH + 80;
+    const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
+    panel({x, y, w, h}, 0.9f);
+    text("RACE SETUP", x + 28, y + 22, 18, kAccent, true);
+    text("Team stats", x + 28, y + 44, 32, kText, true);
+    char buf[128];
+    char about[256];
+    std::snprintf(about, sizeof about, "Each stat 0-%d (%d is the stock car), %d points per team. Changing a driver's style on the Grid page resets the team to that style's stats.",
+                  r.max, r.neutral, r.budget);
+    text(about, x + 28, y + 86, 14, kDim);
+    const float hy = y + 116;
+    for (int k = 0; k < ns; ++k) {
+        const char* label = r.labels[k].c_str();
+        float size = 14;
+        while (size > 10 && width(label, size, true) > cellW - 8) size -= 1;
+        text(label, x + 20 + nameW + k * cellW + (cellW - width(label, size, true)) / 2, hy, size, kDim, true);
+    }
+    textRight("Left", x + w - 24, hy, 14, kDim, true);
+    const auto& table = liveryTable();
+    for (int i = 0; i < (int)teams.size(); ++i) {
+        const int t = teams[i];
+        const float ry = hy + 26 + i * rowH;
+        const bool selRow = i == m.teamRow;
+        if (selRow) DrawRectangleRounded({x + 14, ry - 4, w - 28, rowH - 4}, 0.3f, 6, Fade(WHITE, 0.08f));
+        const int slot = t < (int)m.teamSlots.size() && !m.teamSlots[t].empty() ? m.teamSlots[t][0] : -1;
+        const bool haveTable = slot >= 0 && slot < (int)table.size();
+        DrawRectangle((int)x + 24, (int)ry + 2, 6, 24, haveTable ? table[slot].color : GRAY);
+        text(haveTable ? table[slot].team.c_str() : "team", x + 38, ry + 4, 18, kText, selRow);
+        const std::vector<int>& v = m.teamStats[t];
+        for (int k = 0; k < ns; ++k) {
+            const float cx = x + 20 + nameW + k * cellW;
+            const bool sel = selRow && k == m.statCol;
+            if (sel) DrawRectangleRounded({cx + 4, ry - 2, cellW - 8, rowH - 8}, 0.3f, 6, Fade(kAccent, 0.18f));
+            // value and a bar: above or below the stock car
+            const int val = k < (int)v.size() ? v[k] : r.neutral;
+            std::snprintf(buf, sizeof buf, "%d", val);
+            const Color vc = val > r.neutral ? Color{90, 200, 120, 255} : val < r.neutral ? Color{240, 110, 70, 255} : kText;
+            text(buf, cx + (cellW - width(buf, 18, true)) / 2, ry + 2, 18, vc, true);
+            const float bw = cellW - 44, bx = cx + 22;
+            DrawRectangle((int)bx, (int)(ry + 26), (int)bw, 4, Fade(WHITE, 0.12f));
+            DrawRectangle((int)bx, (int)(ry + 26), (int)(bw * val / std::max(1, r.max)), 4, vc);
+            text("<", cx + 8, ry + 2, 18, sel ? kAccent : kDim, true);
+            text(">", cx + cellW - 18, ry + 2, 18, sel ? kAccent : kDim, true);
+            hits.push_back({cx, ry - 4, cellW / 2, rowH - 4, 1000 + t * 16 + k, -1});
+            hits.push_back({cx + cellW / 2, ry - 4, cellW / 2, rowH - 4, 1000 + t * 16 + k, 1});
+        }
+        std::snprintf(buf, sizeof buf, "%d", r.budget - m.statSum(t));
+        textRight(buf, x + w - 24, ry + 4, 18, r.budget - m.statSum(t) > 0 ? kAccent : kDim, true);
+    }
+    Rectangle b = {x + w - 180, y + h - 58, 150, 40};
+    DrawRectangleRounded(b, 0.25f, 8, kAccent);
+    text("DONE", b.x + (b.width - width("DONE", 20, true)) / 2, b.y + 9, 20, Color{20, 20, 24, 255}, true);
+    hits.push_back({b.x, b.y, b.width, b.height, 99, 0});
+    const char* help = "Up/Down team    Tab next stat    Left/Right change (lower one stat to raise another)    Enter done";
     text(help, x + 28, y + h - 46, 15, kDim);
 }
 
