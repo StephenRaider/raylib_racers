@@ -42,7 +42,10 @@ std::string usage(const char* prog, bool viewer) {
              "  --focus N             follow car N (0 = first --car); default: whoever leads\n"
              "  --screenshot FILE     save a screenshot at --at seconds of race time, then exit\n"
              "  --at SECONDS\n"
-             "Keys: Tab/Left/Right focus car, L follow leader, C or F2-F8 camera, Space pause, +/- speed, R restart, H HUD, F1 help\n";
+             "  --no-menu             skip the race setup menu\n"
+             "  --mute                no engine sound (M toggles it)\n"
+             "  --sound-test FILE     render 25 s of engine sound from --at seconds to a WAV, no window\n"
+             "Keys: Tab/Left/Right focus car, L follow leader, C or F2-F8 camera, Space pause, +/- speed, M mute, R restart, Esc menu, H HUD, F1 help\n";
     }
     return u;
 }
@@ -81,6 +84,9 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (viewer && a == "--speed") cfg.timeScale = std::stof(need(i, a));
             else if (viewer && a == "--camera") cfg.camera = std::stoi(need(i, a));
             else if (viewer && a == "--focus") cfg.focus = std::stoi(need(i, a));
+            else if (viewer && a == "--no-menu") cfg.noMenu = true;
+            else if (viewer && a == "--mute") cfg.mute = true;
+            else if (viewer && a == "--sound-test") cfg.soundTest = need(i, a);
             else if (viewer && a == "--screenshot") cfg.screenshot = need(i, a);
             else if (viewer && a == "--at") cfg.screenshotAt = std::stof(need(i, a));
             else throw std::runtime_error("unknown option " + a);

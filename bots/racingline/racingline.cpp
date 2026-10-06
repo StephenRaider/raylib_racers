@@ -248,7 +248,7 @@ void strategy(RacingLine& r, const RRSensors* in) {
     RRControl o{};
     o.pit_request = 1;
     // Fuel to the flag plus a little; the host clamps it to the tank (then another stop follows).
-    o.pit_fuel = std::max(0.0f, fuelPerM * toGo * 1.03f + reserve + 0.5f - fuelAtEntry);
+    o.pit_fuel = std::max(0.0f, fuelPerM * toGo * 1.08f + reserve + 1.0f - fuelAtEntry);
     // Tyres: change if they are past a third of their life or will not reach the
     // flag; take the softest compound that lasts to the flag.
     const float baseWear = wearPerM / compoundWear(in->tire_compound);  // per metre on mediums

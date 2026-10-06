@@ -3,8 +3,17 @@
 #include <vector>
 
 #include "raylib.h"
+#include "menu.hpp"
 #include "race.hpp"
 #include "renderer.hpp"
+
+// One line of the qualifying classification.
+struct QualiLine {
+    std::string name;
+    Color color;
+    float time = 0;      // best lap, 0 = no time yet
+    bool running = false;  // on track now
+};
 
 struct HudState {
     bool paused = false;
@@ -14,6 +23,11 @@ struct HudState {
     CamMode camera = CAM_CHASE;
     bool showHud = true;
     bool showHelp = false;
+    bool muted = false;
+    // weekend mode
+    bool qualifying = false;      // a qualifying run is on track
+    int qualiRun = 0, qualiRuns = 0;
+    std::vector<QualiLine> quali; // sorted: timed cars by time, then the rest
     ViewOptions view;
 };
 
@@ -23,6 +37,8 @@ public:
     void init(const rr::Track& track, const std::string& assetsDir);
     void shutdown();
     void draw(const rr::Race& race, const HudState& st);
+    // The race setup screen; fills `hits` with its clickable areas.
+    void drawMenu(const MenuState& m, std::vector<MenuHit>& hits);
 
 private:
     void text(const char* s, float x, float y, float size, Color c, bool bold = false, bool mono = false);
@@ -34,6 +50,12 @@ private:
     void drawMinimap(const rr::Race& race, const HudState& st);
     void drawCarPanel(const rr::Race& race, const HudState& st);
     void drawHelp();
+    void drawGridPage(const MenuState& m, std::vector<MenuHit>& hits);
+    void drawQualiTower(const rr::Race& race, const HudState& st);
+public:
+    // Qualifying classification between the sessions, with the race start prompt.
+    void drawQualiResults(const HudState& st);
+private:
     void drawResults(const rr::Race& race);
 
     Font regular_{}, bold_{}, mono_{};

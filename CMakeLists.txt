@@ -78,7 +78,11 @@ if(RR_BUILD_VIEWER)
     apps/viewer/main.cpp
     apps/viewer/renderer.cpp
     apps/viewer/hud.cpp
-    apps/viewer/car_model.cpp)
+    apps/viewer/car_model.cpp
+    apps/viewer/engine_sound.cpp
+    apps/viewer/race_audio.cpp
+    apps/viewer/menu.cpp
+    apps/viewer/liveries.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
   target_compile_options(rr_viewer PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
   rr_output(rr_viewer "${RR_OUT}")

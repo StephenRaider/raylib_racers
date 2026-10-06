@@ -74,13 +74,27 @@ ctest --test-dir build          # quick smoke races
 options (noise on the range finders, physics step, robot rate, time limit,
 `--fuel-rate` and `--wear-rate` multipliers).
 
+The viewer opens on a **race setup** menu: track, race length, tyre life
+(in laps of the chosen track; the menu measures a lap first), number of cars
+(up to 20: ten teams of two, each with its own number), the session and a
+**Grid** page where each car gets a livery and a driving algorithm (any robot
+library in `bots/` shows up there). **Weekend** mode runs qualifying first:
+each car goes out alone for an out lap and two flying laps, and the fastest
+lap takes pole. `Enter` skips the current run, `Shift+Enter` the rest of
+qualifying. `--no-menu` skips the menu.
+
+The engine sound is synthesised from each car's revs and throttle (a V10 with
+overrun pops and a rev limiter), for the cars nearest the camera. `M` mutes it;
+`rr_viewer --sound-test out.wav --at 20` writes 25 s of it to a file.
+
 Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `L` goes back
 to following the leader (the default), `C` / `Shift+C` cycle the cameras and
 `F2`-`F8` pick one: follow, cinematic (eases between framings around the car),
 TV, helicopter, top down, orbit, overview. The mouse wheel zooms the orbit,
 helicopter and top-down cameras. `Space` pauses, `+`/`-` change speed
 (up to 64x), `N` single-steps while paused, `R` restarts, `P` toggles robot
-paths, `S` shows the focused car's range finders, `H` hides the HUD, `F1` help.
+paths, `S` shows the focused car's range finders, `M` mutes, `Esc` returns to
+the menu, `H` hides the HUD, `F1` help.
 
 To grab a frame without a window manager (e.g. under `xvfb-run`):
 `rr_viewer --screenshot shot.png --at 30 --camera 1`.

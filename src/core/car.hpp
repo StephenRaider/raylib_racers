@@ -4,15 +4,18 @@
 
 namespace rr {
 
+// Defaults approximate a 2004-2010 Formula 1 car: ~605 kg with driver, a 19,000 rpm
+// ~650 kW engine, a 7-speed seamless gearbox, carbon brakes and roughly 2.5x the
+// car's weight in downforce at 300 km/h.
 struct CarParams {
-    float mass = 800;
-    float length = 4.6f, width = 1.9f;
-    float cgToFront = 1.35f, cgToRear = 1.45f;
-    float cgHeight = 0.28f;
-    float yawInertia = 1300;
-    float maxSteer = 0.32f;       // rad
+    float mass = 605;
+    float length = 4.6f, width = 1.8f;
+    float cgToFront = 1.62f, cgToRear = 1.40f;  // 46% of the static weight on the front axle
+    float cgHeight = 0.27f;
+    float yawInertia = 850;
+    float maxSteer = 0.30f;       // rad
     float steerRate = 2.5f;       // rad/s at the road wheels
-    float tireMu = 1.5f;
+    float tireMu = 1.65f;         // slicks / grooved tyres, mechanical grip
     float tireB = 18.0f, tireC = 1.3f;  // simplified magic formula
     // Rear tyres a little stiffer and grippier than the fronts: a stable,
     // mildly understeering car, like most racing setups.
@@ -22,24 +25,25 @@ struct CarParams {
     // friction drops by muLoadDrop per extra static load.
     float loadSens = 0.5f;
     float muLoadDrop = 0.08f;
-    float dragCoeff = 0.48f;      // 0.5 rho Cd A
-    float downforceCoeff = 1.4f;  // 0.5 rho Cl A
+    float dragCoeff = 0.75f;      // 0.5 rho Cd A (Cd A ~ 1.2 m^2)
+    float downforceCoeff = 2.3f;  // 0.5 rho Cl A (lift-to-drag ~ 3)
     float downforceFront = 0.42f; // share on the front axle
     float rollingResist = 0.015f;
     float wheelRadius = 0.33f;
     float finalDrive = 3.0f;
-    int numGears = 6;
-    float gearRatios[RR_MAX_GEARS] = {3.2f, 2.35f, 1.85f, 1.52f, 1.3f, 1.15f, 0, 0};
-    float reverseRatio = 3.0f;
-    float idleRpm = 2000, maxRpm = 9000;
-    float maxBrakeForce = 17000;  // N
-    float brakeFront = 0.66f;     // brake bias
+    int numGears = 7;
+    // top speeds at the limiter: ~100, 135, 170, 205, 243, 283, 325 km/h
+    float gearRatios[RR_MAX_GEARS] = {7.88f, 5.84f, 4.64f, 3.84f, 3.24f, 2.78f, 2.42f, 0};
+    float reverseRatio = 8.0f;
+    float idleRpm = 4000, maxRpm = 19000;
+    float maxBrakeForce = 30000;  // N, carbon discs: enough to lock the wheels at speed
+    float brakeFront = 0.58f;     // brake bias
     float drivetrainEff = 0.9f;
 
     // Fuel: mass is the dry car with driver; fuel adds to it.
-    float fuelCapacity = 60.0f;   // litres
+    float fuelCapacity = 58.0f;   // litres: about 25 laps of the circuit at ~2.3 l/lap
     float fuelDensity = 0.75f;    // kg/l
-    float fuelPerJoule = 2.3e-7f; // litres per joule of engine work (~3 l per lap of the circuit)
+    float fuelPerJoule = 1.2e-7f; // litres per joule of engine work (~25% efficient at 34 MJ/l)
     // Tyre wear: wear per joule of sliding work, before compound and race multipliers.
     float wearPerJoule = 2.0e-8f;
     // Damage costs downforce: up to maxAeroLoss at damageForMaxLoss.
@@ -62,7 +66,7 @@ struct CarState {
     float wheelSpin = 0;
     float wheelRot = 0;     // for rendering
     float damage = 0;
-    float fuel = 60;
+    float fuel = 58;
     float tireWear[2] = {0, 0};  // front, rear
     int compound = RR_TIRE_MEDIUM;
 

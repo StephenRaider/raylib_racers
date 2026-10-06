@@ -1,0 +1,202 @@
+{
+  "number_stamp": {
+    "centre_px": [
+      1110,
+      967
+    ],
+    "digit_height_px": 45,
+    "rotation": "90 deg counter-clockwise (top of digits towards the cockpit)"
+  },
+  "teams": [
+    {
+      "team": "Scuderia Rosso",
+      "livery": "liveries/rosso.png",
+      "cars": [
+        {
+          "number": 1,
+          "livery": "liveries/numbered/rosso_1.png"
+        },
+        {
+          "number": 16,
+          "livery": "liveries/numbered/rosso_16.png"
+        }
+      ],
+      "number_colour": [
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "team": "Papaya Racing",
+      "livery": "liveries/papaya.png",
+      "cars": [
+        {
+          "number": 4,
+          "livery": "liveries/numbered/papaya_4.png"
+        },
+        {
+          "number": 81,
+          "livery": "liveries/numbered/papaya_81.png"
+        }
+      ],
+      "number_colour": [
+        20,
+        20,
+        24
+      ]
+    },
+    {
+      "team": "Silver Arrow GP",
+      "livery": "liveries/silver_teal.png",
+      "cars": [
+        {
+          "number": 44,
+          "livery": "liveries/numbered/silver_teal_44.png"
+        },
+        {
+          "number": 63,
+          "livery": "liveries/numbered/silver_teal_63.png"
+        }
+      ],
+      "number_colour": [
+        20,
+        20,
+        22
+      ]
+    },
+    {
+      "team": "Midnight Energy",
+      "livery": "liveries/midnight.png",
+      "cars": [
+        {
+          "number": 33,
+          "livery": "liveries/numbered/midnight_33.png"
+        },
+        {
+          "number": 11,
+          "livery": "liveries/numbered/midnight_11.png"
+        }
+      ],
+      "number_colour": [
+        255,
+        205,
+        0
+      ]
+    },
+    {
+      "team": "Racing Green F1",
+      "livery": "liveries/racing_green.png",
+      "cars": [
+        {
+          "number": 14,
+          "livery": "liveries/numbered/racing_green_14.png"
+        },
+        {
+          "number": 18,
+          "livery": "liveries/numbered/racing_green_18.png"
+        }
+      ],
+      "number_colour": [
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "team": "Bleu Rose",
+      "livery": "liveries/blue_pink.png",
+      "cars": [
+        {
+          "number": 10,
+          "livery": "liveries/numbered/blue_pink_10.png"
+        },
+        {
+          "number": 31,
+          "livery": "liveries/numbered/blue_pink_31.png"
+        }
+      ],
+      "number_colour": [
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "team": "Grove Blue",
+      "livery": "liveries/white_navy.png",
+      "cars": [
+        {
+          "number": 3,
+          "livery": "liveries/numbered/white_navy_3.png"
+        },
+        {
+          "number": 23,
+          "livery": "liveries/numbered/white_navy_23.png"
+        }
+      ],
+      "number_colour": [
+        215,
+        25,
+        45
+      ]
+    },
+    {
+      "team": "Neon Kick",
+      "livery": "liveries/neon_black.png",
+      "cars": [
+        {
+          "number": 27,
+          "livery": "liveries/numbered/neon_black_27.png"
+        },
+        {
+          "number": 77,
+          "livery": "liveries/numbered/neon_black_77.png"
+        }
+      ],
+      "number_colour": [
+        60,
+        255,
+        70
+      ]
+    },
+    {
+      "team": "Sunburst Jordan",
+      "livery": "liveries/sunburst.png",
+      "cars": [
+        {
+          "number": 7,
+          "livery": "liveries/numbered/sunburst_7.png"
+        },
+        {
+          "number": 12,
+          "livery": "liveries/numbered/sunburst_12.png"
+        }
+      ],
+      "number_colour": [
+        20,
+        20,
+        20
+      ]
+    },
+    {
+      "team": "Steel Stars",
+      "livery": "liveries/steel_red.png",
+      "cars": [
+        {
+          "number": 20,
+          "livery": "liveries/numbered/steel_red_20.png"
+        },
+        {
+          "number": 8,
+          "livery": "liveries/numbered/steel_red_8.png"
+        }
+      ],
+      "number_colour": [
+        210,
+        20,
+        30
+      ]
+    }
+  ]
+}
