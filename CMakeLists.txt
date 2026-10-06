@@ -77,7 +77,8 @@ if(RR_BUILD_VIEWER)
   add_executable(rr_viewer
     apps/viewer/main.cpp
     apps/viewer/renderer.cpp
-    apps/viewer/hud.cpp)
+    apps/viewer/hud.cpp
+    apps/viewer/car_model.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
   target_compile_options(rr_viewer PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
   rr_output(rr_viewer "${RR_OUT}")

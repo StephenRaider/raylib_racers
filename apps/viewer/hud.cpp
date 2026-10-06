@@ -78,8 +78,15 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         drawTower(race, st);
         drawMinimap(race, st);
         drawCarPanel(race, st);
-        const char* hint = "F1 help   Tab next car   C camera   Space pause   +/- speed";
+        const char* hint = "F1 help   Tab next car   L follow leader   C camera   Space pause   +/- speed";
         text(hint, 18, GetScreenHeight() - 30.0f, 16, Fade(kText, 0.75f));
+        // camera and focus mode, top centre
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "%s CAM   %s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED");
+        float w = width(buf, 15, true) + 28;
+        float x = (GetScreenWidth() - w) / 2;
+        panel({x, 12, w, 30});
+        text(buf, x + 14, 18, 15, st.followLeader ? kAccent : kText, true);
     }
     if (st.paused && !race.isOver()) {
         const char* p = "PAUSED";
@@ -287,12 +294,14 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
 void Hud::drawHelp() {
     const char* lines[] = {
         "Tab / Right   next car",       "Left          previous car",       "1-9           focus car by position",
-        "C             cycle camera",   "Mouse drag    orbit (orbit cam)", "Wheel         zoom (orbit cam)",
+        "L             follow the leader", "C / Shift+C   next / prev camera",
+        "F2-F8         follow, cinematic, TV, helicopter, top down, orbit, overview",
+        "Mouse drag    orbit (orbit cam)", "Wheel         zoom (orbit, heli, top)",
         "Space         pause",          "+ / -         simulation speed",  "N             single step (paused)",
         "R             restart race",   "P             robot paths",       "S             range finders",
         "H             hide HUD",       "F12           screenshot",        "F1            close help"};
     const int n = sizeof(lines) / sizeof(lines[0]);
-    float w = 460, h = 70 + n * 24.0f;
+    float w = 760, h = 70 + n * 24.0f;
     float x = (GetScreenWidth() - w) / 2, y = (GetScreenHeight() - h) / 2;
     panel({x, y, w, h}, 0.85f);
     text("CONTROLS", x + 24, y + 20, 22, kAccent, true);

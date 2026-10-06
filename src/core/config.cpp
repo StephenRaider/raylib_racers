@@ -38,11 +38,11 @@ std::string usage(const char* prog, bool viewer) {
              "  --width N --height N  window size (default 1600x900)\n"
              "  --fullscreen\n"
              "  --speed X             start at X times real time\n"
-             "  --camera N            0 chase, 1 TV, 2 orbit, 3 overview\n"
-             "  --focus N             start following car N (0 = first --car)\n"
+             "  --camera N            0 follow, 1 cinematic, 2 TV, 3 helicopter, 4 top down, 5 orbit, 6 overview\n"
+             "  --focus N             follow car N (0 = first --car); default: whoever leads\n"
              "  --screenshot FILE     save a screenshot at --at seconds of race time, then exit\n"
              "  --at SECONDS\n"
-             "Keys: Tab/Left/Right focus car, C camera, Space pause, +/- speed, R restart, H HUD, F1 help\n";
+             "Keys: Tab/Left/Right focus car, L follow leader, C or F2-F8 camera, Space pause, +/- speed, R restart, H HUD, F1 help\n";
     }
     return u;
 }
