@@ -194,12 +194,15 @@ int main(int argc, char** argv) {
                 found = (int)menu.algos.size() - 1;
             }
             menu.carAlgo.push_back(found);
+            menu.carTires.push_back(e.tires);
         }
     }
     menu.maxCars = (int)menu.carAlgo.size();
     while ((int)menu.carAlgo.size() < liveryCount) menu.carAlgo.push_back((int)menu.carAlgo.size() % 4);
     menu.maxCars = std::max(menu.maxCars, liveryCount);
     for (int i = 0; i < menu.maxCars; ++i) menu.carLivery.push_back(i % liveryCount);
+    menu.carTires.resize(menu.maxCars, 0);
+    menu.tyreRule = cfg.twoCompounds < 0 ? 0 : cfg.twoCompounds ? 1 : 2;
     menu.cars = cliEntries.empty() ? (int)std::min<size_t>(menu.maxCars, liveryTable().empty() ? 7 : liveryCount)
                                    : (int)cliEntries.size();
     // Entries for the first `cars` cars of the grid; names carry the race number.
@@ -211,7 +214,9 @@ int main(int argc, char** argv) {
             const int slot = menu.carLivery[i];
             std::string name = a.label;
             if (!liveryTable().empty()) name = std::to_string(liveryTable()[slot].number) + " " + name;
-            entries.push_back({a.robot, a.params, name});
+            rr::EntrySpec e{a.robot, a.params, name};
+            e.tires = menu.carTires[i];
+            entries.push_back(e);
             slots.push_back(slot);
         }
         setCarLiveries(slots);
@@ -308,6 +313,7 @@ int main(int argc, char** argv) {
         cfg.track = ts.file;
         cfg.laps = menu.laps;
         cfg.wearRate = menu.wearRate();
+        cfg.twoCompounds = menu.twoCompoundsArg();
         cfg.entries = gridEntries();
         auto fresh = makeRace(cfg, paths);
         if (!fresh) return false;

@@ -20,10 +20,10 @@ const float kRestitutionCar = 0.2f;
 const float kDraftMax = 0.45f, kDraftLength = 60.0f, kDraftWidth = 3.5f;  // slipstream
 const float kDirtyMax = 0.10f, kDirtyLength = 40.0f, kDirtyWidth = 3.0f;  // dirty air: downforce lost
 const float kBoxSpacing = 14.0f, kFirstBox = 25.0f;
-const float kServiceBase = 2.0f;      // s: car jacked up and dropped
-const float kFuelFlow = 2.5f;         // l/s
-const float kTireChange = 3.5f;       // s, runs in parallel with refuelling
-const float kRepairPer1000 = 1.0f;    // s per 1000 damage
+const float kServiceBase = RR_PIT_SERVICE_BASE;
+const float kFuelFlow = RR_PIT_FUEL_RATE;
+const float kTireChange = RR_PIT_TIRE_CHANGE;
+const float kRepairPer1000 = RR_PIT_REPAIR_PER_1000;
 
 float yawInertia(const Car& c) { return c.phys.yawInertia; }  // fuel sits at the CG
 
@@ -132,7 +132,13 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         std::memcpy(c.robotCfg.track_sensor_angles, kDefaultSensorAngles, sizeof kDefaultSensorAngles);
         c.robotCfg.auto_gear = 1;
         c.robotCfg.initial_fuel = c.phys.fuelCapacity;
-        c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
+        c.robotCfg.tire_compound = e.tires ? e.tires : RR_TIRE_MEDIUM;
+        c.robotCfg.race_laps = cfg.laps;
+        c.robotCfg.two_compound_rule = twoCompoundRuleFor(cfg);
+        c.robotCfg.fuel_rate = cfg.fuelRate;
+        c.robotCfg.wear_rate = cfg.wearRate;
+        c.robotCfg.ambient_temp = cfg.ambient;
+        c.robotCfg.starting_compound_set = e.tires != 0;
         RRCarSpec spec = c.phys.spec();
         c.robot = api->create(&track_.info(), &spec, (int)i, c.params.c_str(), &c.robotCfg);
         if (!c.robot) {
@@ -143,6 +149,8 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         if (cfg.fuelLimit > 0) c.robotCfg.initial_fuel = std::min(c.robotCfg.initial_fuel, cfg.fuelLimit);
         if (c.robotCfg.tire_compound < RR_TIRE_SOFT || c.robotCfg.tire_compound > RR_TIRE_HARD)
             c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
+        if (e.tires) c.robotCfg.tire_compound = e.tires;  // the team's call wins
+        c.startTiresSet = e.tires != 0;
     }
     // Make duplicate names unique: "simple", "simple #2", ...
     for (size_t i = 0; i < cars_.size(); ++i) {
@@ -188,6 +196,7 @@ void Race::placeOnGrid() {
         c.state.yaw = std::atan2(d.y, d.x);
         c.state.fuel = c.robotCfg.initial_fuel;
         c.state.compound = c.robotCfg.tire_compound;
+        c.compoundsUsed = 1 << c.state.compound;
         c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
         TrackLoc loc = track_.locateGlobal(c.state.pos);
         c.trackIdx = loc.idx;
@@ -262,6 +271,32 @@ void Race::computeSensors(Car& c) {
     s.blue_flag_ds = c.blueCar >= 0 ? c.blueDs : 0.0f;
     s.penalties = c.penalties;
     s.penalty_time = c.penaltyTime;
+
+    // The timing screen, in race order.
+    s.num_timing = std::min((int)order_.size(), RR_MAX_CARS);
+    for (int p = 0; p < s.num_timing; ++p) {
+        const Car& o = cars_[order_[p]];
+        RRTimingEntry& t = s.timing[p];
+        t.car_index = order_[p];
+        t.race_pos = o.position;
+        t.laps_done = o.lapsDone;
+        t.gap_to_leader = (float)o.gap;
+        t.gap = (o.gap >= 0 && c.gap >= 0) ? (float)(c.gap - o.gap) : 0.0f;
+        // (gaps to the leader are taken at the same point of the track, so laps are included)
+        t.dist_raced = (float)o.distRaced;
+        t.last_lap = o.lapTimes.empty() ? 0.0f : o.lapTimes.back();
+        t.best_lap = o.bestLap;
+        t.pit_state = o.pitState;
+        t.pit_stops = o.pitStops;
+        t.tire_compound = o.state.compound;
+        t.laps_on_tires = o.lapsOnTires;
+        t.compounds_used = o.compoundsUsed;
+        t.finished = o.finished;
+        t.dnf = o.dnf;
+    }
+    s.two_compound_rule = twoCompoundRule();
+    s.compounds_used = c.compoundsUsed;
+    s.starting_compound_set = c.startTiresSet;
 
     s.speed_x = st.vx;
     s.speed_y = st.vy;
@@ -368,13 +403,16 @@ void Race::updateBlueFlags() {
             continue;
         }
         c.blueDs = bestDs;
-        if (c.blueCar != was) c.blueFlags++;
+        if (c.blueCar != was) {
+            c.blueFlags++;
+            c.blueHeld = 0;
+        }
         // The clock runs while the lapping car is stuck right behind us.
         if (bestDs > -30.0f) c.blueHeld += tick;
         if (c.blueHeld > RR_BLUE_FLAG_LIMIT) {
             c.penalties++;
             c.penaltyTime += RR_BLUE_FLAG_PENALTY;
-            c.blueHeld = 0;
+            c.blueHeld = -1e9f;  // one penalty per car held up
         }
     }
 }
@@ -563,6 +601,11 @@ void Race::updateProgress(Car& c) {
         if (c.lapsDone >= cfg_.laps) {
             c.finished = true;
             c.finishTime = time_;
+            if (twoCompoundRule() && (c.compoundsUsed & (c.compoundsUsed - 1)) == 0) {
+                c.penalties++;
+                c.penaltyTime += RR_TWO_COMPOUND_PENALTY;
+                c.twoCompoundPenalty = true;
+            }
             if (leaderFinish_ < 0) leaderFinish_ = time_;
             break;
         }
@@ -641,6 +684,7 @@ void Race::finishService(Car& c) {
     c.state.fuel = std::min(c.phys.fuelCapacity, c.state.fuel + c.pitOrder.pit_fuel);
     if (c.pitOrder.pit_tires) {
         c.state.compound = c.pitOrder.pit_tires;
+        c.compoundsUsed |= 1 << c.state.compound;
         c.state.tireWear[0] = c.state.tireWear[1] = 0;
         c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
         c.lapsOnTires = 0;

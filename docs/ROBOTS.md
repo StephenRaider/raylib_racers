@@ -116,7 +116,7 @@ Flags (ABI 3):
 
 | Field | Meaning |
 |---|---|
-| `blue_flag`, `blue_flag_car`, `blue_flag_ds` | a car that is lapping you is within `RR_BLUE_FLAG_RANGE` (60 m or 1.2 s) behind: let it by. Holding it up within 30 m for more than `RR_BLUE_FLAG_LIMIT` (8 s) costs a `RR_BLUE_FLAG_PENALTY` (5 s) time penalty, added to your race time |
+| `blue_flag`, `blue_flag_car`, `blue_flag_ds` | a car that is lapping you is within `RR_BLUE_FLAG_RANGE` (60 m or 1.2 s) behind: let it by. Holding it up within 30 m for more than `RR_BLUE_FLAG_LIMIT` (8 s) costs a `RR_BLUE_FLAG_PENALTY` (5 s) time penalty, added to your race time (once per lapping car) |
 | `penalties`, `penalty_time` | time penalties so far and the seconds they add |
 
 Other cars, for racecraft: `nearby[num_nearby]` lists up to 8 cars, nearest
@@ -138,6 +138,8 @@ heading in your body frame (`rel_x`, `rel_y`, `rel_yaw`), `race_pos`,
 | `pit_fuel` | litres | fuel to add, clamped to the tank |
 | `pit_tires` | 0 or `RR_TIRE_*` | 0 keeps the tyres |
 | `pit_repair` | 0 / 1 | repair all damage |
+| `pit_window[2]` | laps | optional (ABI 5): earliest and latest lap of your next planned stop, 0 = none. The viewer shows it |
+| `pit_plan_tires` | 0 or `RR_TIRE_*` | optional (ABI 5): the compound you plan to fit then |
 
 ## Fuel, tyres and pit stops
 
@@ -151,16 +153,23 @@ The physics is in `src/core/car.cpp`; the numbers a strategy needs are:
   circuit at racing speed, so the 58 l tank lasts about 25 laps. A full tank
   adds 44 kg. `--fuel-rate X` scales consumption.
 - **Tyres** wear in proportion to sliding work (cornering, braking, wheelspin).
-  A medium loses about 0.03 per lap of the circuit. Grip falls 7% from new to
-  wear 0.7, then off a cliff (-0.8 per unit of wear beyond 0.7).
-  Softs grip 3.5% more and wear 1.7x faster; hards grip 2.5% less and wear 0.6x.
+  A medium loses about 0.02-0.03 per lap of the circuit, and a worn tyre slides
+  more, so the rate grows through a stint. Grip falls 7% from new to wear 0.7,
+  then off a cliff (-0.8 per unit of wear beyond 0.7). Softs grip 5% more and
+  wear 2x faster; hards grip 3.5% less and wear 0.55x. Temperature outside
+  the compound's window costs grip and adds wear (see ABI 4 above).
   `--wear-rate X` scales wear (handy for forcing stops in short races).
 - **Slipstream**: a car up to 60 m behind another and within 3.5 m of its
   line has up to 45% less drag, so a faster car can close up on a straight
   and pull out to pass.
 
 Starting fuel and tyres are set in `create()` through `config->initial_fuel`
-and `config->tire_compound`.
+and `config->tire_compound`. When the team has picked the starting tyres
+(`--tires`, or the viewer's Grid page) `config->starting_compound_set` is 1,
+`tire_compound` already holds that choice and changing it has no effect: plan
+the fuel around it. `config` also tells you the race (ABI 5): `race_laps`,
+`two_compound_rule`, the `fuel_rate` and `wear_rate` multipliers and
+`ambient_temp`.
 
 **The pit lane.** `track->pit` describes it: `side` (+1 left), the stretch of
 track it runs along (`entry_s` -> `lane_start_s` -> `lane_end_s` -> `exit_s`), the
@@ -176,14 +185,53 @@ A stop, step by step:
    above `speed_limit`. Set `pit_request` and the order fields.
 3. Move to `box_offset` and stop within about 2.5 m of `pit_box_s`. The crew
    starts: `pit_state` becomes `RR_PIT_SERVICE` and the car is held still for
-   2 s + max(fuel / 2.5 l/s, 3.5 s if changing tyres) + 1 s per 1000 damage
-   when repairing.
+   `RR_PIT_SERVICE_BASE` (2 s) + max(fuel / `RR_PIT_FUEL_RATE` (2.5 l/s),
+   `RR_PIT_TIRE_CHANGE` (3.5 s) if changing tyres) + `RR_PIT_REPAIR_PER_1000`
+   (1 s) per 1000 damage when repairing, all times the car's
+   `pit_service_scale`.
 4. When `pit_state` turns to `RR_PIT_DONE`, drive back to `lane_offset`, then
    rejoin the track after `lane_end_s`.
 
-`bots/racingline` does all of this: it measures fuel and wear per metre,
-decides one lap ahead, orders fuel to the flag and the softest compound that
-lasts, and drives a blended path into and out of its box.
+**The timing screen and race rules (ABI 5).** Every team sees the same
+timing screen: `timing[num_timing]`, in race order, one `RRTimingEntry` per
+car with its position, laps, `gap` to you in seconds (+ ahead, laps
+included), last and best laps, `pit_state`, `pit_stops`, the compound fitted,
+its age (`laps_on_tires`) and the compounds it has used. Track positions and
+other cars' wear and fuel are not on it. `two_compound_rule` says whether the
+race requires two different compounds (by default races over 20 laps;
+`--two-compounds on|off|auto`); finishing without them costs
+`RR_TWO_COMPOUND_PENALTY` (30 s). `compounds_used` is your own mask.
+
+With that a robot can be its own strategist: compare the cost of each number
+of stops, place a stop where the car rejoins in clear air (another car's gap
+minus your pit loss), stop a lap early to undercut the car ahead, stay out
+when it has stopped (overcut), or answer a rival's stop.
+
+`bots/racingline` does all of this (`bots/racingline/strategist.hpp`):
+
+- **Model.** A lap costs the reference lap, plus the compound's pace (soft
+  -1.4%, hard +1.8%), plus the grip lost to wear, plus 0.023 s per kg of fuel.
+  A stop costs the measured pit lane loss plus the service time. It starts
+  from priors (the planned line's lap time, fuel from the track length, wear
+  from its `heat` setting) and replaces them with what it measures: fuel and
+  wear per lap since the last stop, clean lap times, the real time lost in the
+  pit lane.
+- **Plan.** Once a lap, a few hundred metres before the pit entry, it searches
+  0 to 3 more stops, the lap of the next one and every compound order, checks
+  fuel and tyre life (a planned stint ends by wear 0.7, the current one may
+  stretch a little past it) and the two-compound rule, and keeps the fastest.
+  The window is every lap for the next stop that costs at most a second more.
+- **Racecraft.** Within a few laps of the planned stop it undercuts a car
+  less than 1.5 s ahead, covers a car within 3 s behind that has just
+  stopped, stays out when the car ahead has just stopped (overcut), and waits a
+  lap if it would rejoin less than 1.5 s behind someone.
+- **Must stops.** Not enough fuel to the next pit entry, tyres past the cliff
+  or heavy damage force a stop whatever the plan says.
+- It publishes the window and the next compound in `pit_window` and
+  `pit_plan_tires`; `RL_DEBUG=1` prints its plan each lap and every decision
+  to stderr.
+
+It drives a blended path into and out of its box.
 
 ## Racecraft
 
@@ -204,8 +252,9 @@ lasts, and drives a blended path into and out of its box.
   behind instead of forcing it.
 - **Aggression**: `attack` (default 1, 0.5 to 2) scales the following gap and
   how early a pass starts; the viewer's "racingline aggressive" uses 1.4.
-- **Blue flags**: move to the side away from the lapping car and lift a
-  little until it is by (`rr_blue_flag`).
+- **Blue flags**: keep to the side away from the lapping car, never attack
+  while being lapped, and lift when it is close and the road ahead is not a
+  slow corner (`rr_blue_flag_side`).
 - **Tyres**: the speed profile assumes tyres in their window and scales with
   `axle_grip` when they are cold or hot; past `heat` °C over the window
   (default 5) it backs off on purpose to cool them.

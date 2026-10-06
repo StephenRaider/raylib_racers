@@ -73,6 +73,9 @@ struct Car {
 
     // after the flag: a cool-down lap into the pit lane
     bool parked = false;
+    int compoundsUsed = 0;      // bit (1 << RR_TIRE_*) per compound fitted
+    bool startTiresSet = false; // the team chose the starting tyres
+    bool twoCompoundPenalty = false;
     float draft = 0, dirtyAir = 0;  // drag and downforce lost to other cars' wakes, fractions
     int parkSlot = -1;          // spot in the pit lane, 0 = furthest down
 
@@ -117,6 +120,9 @@ public:
     const std::vector<int>& order() const { return order_; }  // car indices by position
     const RaceConfig& config() const { return cfg_; }
     const std::vector<Contact>& contacts() const { return contacts_; }
+    // Two different compounds must be used (cfg.twoCompounds; automatic: races over 20 laps).
+    bool twoCompoundRule() const { return twoCompoundRuleFor(cfg_); }
+    static bool twoCompoundRuleFor(const RaceConfig& c) { return c.twoCompounds > 0 || (c.twoCompounds < 0 && c.laps > 20); }
 
     void printResults(FILE* out) const;
     bool writeJson(const std::string& path, double wallSeconds) const;

@@ -117,7 +117,7 @@ static const char* compoundName(int compound) {
 }
 
 // Timing tower layout, shared by drawing and clicking.
-static const float kTowerX = 16, kTowerW = 340, kTowerRowH = 28, kTowerTop = 112;
+static const float kTowerX = 16, kTowerW = 400, kTowerRowH = 28, kTowerTop = 112;
 
 int Hud::towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const {
     if (!st.showHud || st.qualifying) return -1;
@@ -156,7 +156,7 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
         textRight(buf, x + 38, y, 19, kText, true);
         DrawRectangle((int)x + 46, (int)y + 1, 5, 19, teamColor(idx));
         {  // shrink long names to fit before the tyre column
-            const float room = w - 112 - 12 - 60;
+            const float room = w - 170 - 12 - 60;
             float size = 19;
             while (size > 13 && width(c.name.c_str(), size) > room) size -= 1;
             text(c.name.c_str(), x + 60, y + (19 - size) * 0.5f, size, kText);
@@ -181,10 +181,12 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
             gapCol = kAccent;
         }
         textRight(gap.c_str(), x + w - 16, y + 1, 17, gapCol, false, true);
-        // tyre compound
-        float cx = x + w - 112, cy = y + 11;
+        // tyre compound and its age in laps
+        float cx = x + w - 170, cy = y + 11;
         DrawCircleV({cx, cy}, 8.5f, compoundColor(c.state.compound));
         DrawCircleV({cx, cy}, 5.5f, Color{25, 25, 30, 255});
+        std::snprintf(buf, sizeof buf, "%d", c.lapsOnTires);
+        text(buf, cx + 12, y + 2, 14, kDim, false, true);
         if (c.pitStops > 0) {
             std::snprintf(buf, sizeof buf, "%d", c.pitStops);
             textRight(buf, cx - 13, y + 2, 14, kDim, false, true);
@@ -227,7 +229,7 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
 
 void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
     const rr::Car& c = race.cars()[st.focus];
-    const float w = 380, h = 252;
+    const float w = 380, h = 276;
     const float x = GetScreenWidth() - w - 16, y = GetScreenHeight() - h - 16;
     panel({x, y, w, h});
     char buf[128];
@@ -251,7 +253,11 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
     const auto& lt = liveryTable();
     const std::string team = lt.empty() ? std::string() : lt[carLivery(st.focus)].team + "   ";
     std::snprintf(buf, sizeof buf, "%s%s%s%s", team.c_str(), c.robotName.c_str(), c.params.empty() ? "" : "  ", c.params.c_str());
-    text(buf, x + 28, y + 38, 15, kDim);
+    {  // team, algorithm and parameters, smaller when long
+        float size = 15;
+        while (size > 11 && width(buf, size) > w - 44) size -= 1;
+        text(buf, x + 28, y + 38, size, kDim);
+    }
     std::snprintf(buf, sizeof buf, "P%d", c.position);
     textRight(buf, x + w - 16, y + 12, 30, kAccent, true);
 
@@ -333,6 +339,21 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
     }
     std::snprintf(buf, sizeof buf, "%d laps", c.lapsOnTires);
     textRight(buf, x + w - 16, ty - 1, 14, kDim, false, true);
+    // strategy: the algorithm's next planned stop, and the two-compound rule
+    float sy = ty + 24;
+    if (k.pit_window[0] > 0 && !c.finished) {
+        if (k.pit_window[1] > k.pit_window[0]) std::snprintf(buf, sizeof buf, "NEXT STOP  LAP %d-%d", k.pit_window[0], k.pit_window[1]);
+        else std::snprintf(buf, sizeof buf, "NEXT STOP  LAP %d", k.pit_window[0]);
+        text(buf, x + 16, sy, 13, kText, false, true);
+        if (k.pit_plan_tires >= RR_TIRE_SOFT && k.pit_plan_tires <= RR_TIRE_HARD) {
+            const float bx = x + 16 + width(buf, 13, false, true) + 16;
+            DrawCircleV({bx, sy + 7}, 7, compoundColor(k.pit_plan_tires));
+            DrawCircleV({bx, sy + 7}, 4.5f, Color{25, 25, 30, 255});
+            text(compoundName(k.pit_plan_tires), bx + 12, sy, 13, kDim);
+        }
+    }
+    if (race.twoCompoundRule() && !c.finished && !c.dnf && (c.compoundsUsed & (c.compoundsUsed - 1)) == 0)
+        textRight("2ND COMPOUND DUE", x + w - 16, sy, 13, kAccent, true);
     if (c.pitState == RR_PIT_SERVICE) {
         std::snprintf(buf, sizeof buf, "IN THE BOX  %.1f s", c.serviceLeft);
         textRight(buf, x + w - 16, y + 46, 14, kAccent, true);
@@ -425,7 +446,7 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
             continue;
         }
         if (sel) DrawRectangleRounded(r, 0.2f, 8, Fade(WHITE, 0.08f));
-        static const char* labels[] = {"Track", "Race length", "Tyre life", "Cars", "Session", "Grid"};
+        static const char* labels[] = {"Track", "Race length", "Tyre life", "Cars", "Session", "Tyre rule", "Grid"};
         const char* label = labels[row];
         note[0] = 0;
         switch (row) {
@@ -466,9 +487,16 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
                 std::snprintf(note, sizeof note, "%s", m.weekend ? "qualifying sets the grid: each car runs alone, fastest lap wins pole"
                                                                  : "grid in the order of the Grid page");
                 break;
+            case MenuState::kRuleRow:
+                std::snprintf(val, sizeof val, "%s", m.tyreRule == 0 ? "Auto" : m.tyreRule == 1 ? "Two compounds" : "Free");
+                std::snprintf(note, sizeof note, "%s",
+                              m.twoCompoundRule() ? "every car must race two different compounds or get +30 s"
+                                                  : m.tyreRule == 0 ? "two compounds required in races over 20 laps"
+                                                                    : "any tyres, any number of stops");
+                break;
             default:
                 std::snprintf(val, sizeof val, "Edit");
-                std::snprintf(note, sizeof note, "choose each car's livery and driving algorithm");
+                std::snprintf(note, sizeof note, "choose each car's livery, driving algorithm and starting tyres");
                 break;
         }
         text(label, r.x + 16, r.y + 8, 21, sel ? kText : kDim, true);
@@ -493,7 +521,7 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
     const int n = m.cars;
     const int perCol = n > 10 ? (n + 1) / 2 : n;
     const int cols = n > 10 ? 2 : 1;
-    const float colW = 620, rowH = 34;
+    const float colW = 740, rowH = 34;
     const float w = cols * colW + 40, h = 130 + perCol * rowH + 70;
     const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
     panel({x, y, w, h}, 0.9f);
@@ -501,9 +529,11 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
     text("Grid", x + 28, y + 44, 32, kText, true);
     text("Livery", x + 28 + 52, y + 98, 14, kDim, true);
     text("Algorithm", x + 28 + 360, y + 98, 14, kDim, true);
+    text("Start tyres", x + 28 + 600, y + 98, 14, kDim, true);
     if (cols == 2) {
         text("Livery", x + 28 + colW + 52, y + 98, 14, kDim, true);
         text("Algorithm", x + 28 + colW + 360, y + 98, 14, kDim, true);
+        text("Start tyres", x + 28 + colW + 600, y + 98, 14, kDim, true);
     }
     const auto& table = liveryTable();
     char buf[128];
@@ -519,29 +549,43 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
         DrawRectangle((int)cx + 58, (int)cy + 3, 6, 20, haveTable ? table[slot].color : GRAY);
         if (haveTable) std::snprintf(buf, sizeof buf, "#%d  %s", table[slot].number, table[slot].team.c_str());
         else std::snprintf(buf, sizeof buf, "livery %d", slot + 1);
-        const bool selL = selRow && m.gridCol == 0, selA = selRow && m.gridCol == 1;
+        const bool selL = selRow && m.gridCol == 0, selA = selRow && m.gridCol == 1, selT = selRow && m.gridCol == 2;
+        const int K = MenuState::kGridCols;
         text("<", cx + 40, cy + 1, 20, selL ? kAccent : kDim, true);
         text(buf, cx + 72, cy + 3, 17, selL ? kText : Fade(kText, 0.85f), selL);
         text(">", cx + 316, cy + 1, 20, selL ? kAccent : kDim, true);
-        hits.push_back({cx + 34, cy - 3, 26, rowH, 100 + car * 2, -1});
-        hits.push_back({cx + 60, cy - 3, 250, rowH, 100 + car * 2, 0});
-        hits.push_back({cx + 308, cy - 3, 26, rowH, 100 + car * 2, 1});
+        hits.push_back({cx + 34, cy - 3, 26, rowH, 100 + car * K, -1});
+        hits.push_back({cx + 60, cy - 3, 250, rowH, 100 + car * K, 0});
+        hits.push_back({cx + 308, cy - 3, 26, rowH, 100 + car * K, 1});
         // algorithm
         const int a = car < (int)m.carAlgo.size() ? m.carAlgo[car] : 0;
         const char* label = a < (int)m.algos.size() ? m.algos[a].label.c_str() : "?";
         text("<", cx + 346, cy + 1, 20, selA ? kAccent : kDim, true);
         text(label, cx + 370, cy + 3, 17, selA ? kText : Fade(kText, 0.85f), selA);
         text(">", cx + 580, cy + 1, 20, selA ? kAccent : kDim, true);
-        hits.push_back({cx + 340, cy - 3, 26, rowH, 100 + car * 2 + 1, -1});
-        hits.push_back({cx + 366, cy - 3, 206, rowH, 100 + car * 2 + 1, 0});
-        hits.push_back({cx + 572, cy - 3, 26, rowH, 100 + car * 2 + 1, 1});
+        hits.push_back({cx + 340, cy - 3, 26, rowH, 100 + car * K + 1, -1});
+        hits.push_back({cx + 366, cy - 3, 206, rowH, 100 + car * K + 1, 0});
+        hits.push_back({cx + 572, cy - 3, 26, rowH, 100 + car * K + 1, 1});
+        // starting tyres: the algorithm's choice, or the team's
+        const int tyre = car < (int)m.carTires.size() ? m.carTires[car] : 0;
+        text("<", cx + 606, cy + 1, 20, selT ? kAccent : kDim, true);
+        if (tyre) {
+            DrawCircleV({cx + 634, cy + 13}, 8.5f, compoundColor(tyre));
+            DrawCircleV({cx + 634, cy + 13}, 5.5f, Color{25, 25, 30, 255});
+        }
+        static const char* tyreNames[] = {"Auto", "Soft", "Medium", "Hard"};
+        text(tyreNames[tyre & 3], cx + (tyre ? 647 : 630), cy + 3, 16, selT ? kText : Fade(kText, 0.85f), selT);
+        text(">", cx + 712, cy + 1, 20, selT ? kAccent : kDim, true);
+        hits.push_back({cx + 600, cy - 3, 26, rowH, 100 + car * K + 2, -1});
+        hits.push_back({cx + 626, cy - 3, 80, rowH, 100 + car * K + 2, 0});
+        hits.push_back({cx + 706, cy - 3, 26, rowH, 100 + car * K + 2, 1});
     }
     // Done button
     Rectangle b = {x + w - 180, y + h - 58, 150, 40};
     DrawRectangleRounded(b, 0.25f, 8, kAccent);
     text("DONE", b.x + (b.width - width("DONE", 20, true)) / 2, b.y + 9, 20, Color{20, 20, 24, 255}, true);
     hits.push_back({b.x, b.y, b.width, b.height, 99, 0});
-    const char* help = "Up/Down car    Tab livery / algorithm    Left/Right change (a livery in use swaps)    Enter done";
+    const char* help = "Up/Down car    Tab livery / algorithm / tyres    Left/Right change (a livery in use swaps)    Enter done";
     text(help, x + 28, y + h - 46, 15, kDim);
 }
 

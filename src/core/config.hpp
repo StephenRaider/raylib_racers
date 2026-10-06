@@ -11,6 +11,7 @@ struct EntrySpec {
     std::string name;    // display name (defaults to the robot's name)
     std::string spec;    // car spec file or name in specs/ ("" = the built-in F1 car)
     std::string dev;     // development tokens, e.g. "top_speed=3,handling=-1"
+    int tires = 0;       // starting compound chosen by the team (RR_TIRE_*), 0 = the robot decides
 };
 
 struct RaceConfig {
@@ -25,6 +26,7 @@ struct RaceConfig {
     float fuelRate = 1.0f;     // fuel consumption multiplier
     float wearRate = 1.0f;     // tyre wear multiplier
     float ambient = 25.0f;     // air and track temperature, C
+    int twoCompounds = -1;     // two-compound rule: 1 on, 0 off, -1 automatic (races over 20 laps)
     std::string devRules = "development";  // rules for --dev, file or name in specs/
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     std::string jsonOut;

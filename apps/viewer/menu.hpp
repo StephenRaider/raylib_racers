@@ -33,19 +33,22 @@ struct MenuState {
     int row = 0;       // selected row; the last is Start
     float tankLitres = 58;
 
-    // Grid page: one livery slot and algorithm per car.
+    // Grid page: one livery slot, algorithm and starting tyre per car.
     bool gridPage = false;
-    int gridRow = 0, gridCol = 0;  // car, and 0 = livery / 1 = algorithm
+    int gridRow = 0, gridCol = 0;  // car, and 0 = livery / 1 = algorithm / 2 = tyres
+    static constexpr int kGridCols = 3;
     std::vector<int> carLivery, carAlgo;
+    std::vector<int> carTires;  // RR_TIRE_*, 0 = the algorithm chooses
     std::vector<Algorithm> algos;
     int liveryCount = 1;
 
     static constexpr int kTyreLives[] = {3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 0};  // 0 = no wear
     static constexpr int kNumTyreLives = sizeof(kTyreLives) / sizeof(kTyreLives[0]);
     bool weekend = false;  // qualifying (each car alone) sets the grid, then the race
+    int tyreRule = 0;      // two-compound rule: 0 automatic (races over 20 laps), 1 on, 2 off
 
-    static constexpr int kRows = 7;  // track, laps, tyre life, cars, session, grid, start
-    static constexpr int kSessionRow = 4, kGridRow = 5, kStartRow = 6;
+    static constexpr int kRows = 8;  // track, laps, tyre life, cars, session, tyre rule, grid, start
+    static constexpr int kSessionRow = 4, kRuleRow = 5, kGridRow = 6, kStartRow = 7;
 
     const TrackStats& stats() const { return tracks[track]; }
     // Laps the medium tyre lasts at wear rate 1 on this track (to the 0.7 wear cliff).
@@ -57,12 +60,14 @@ struct MenuState {
     float lapsPerTank() const { return tankLitres / std::max(0.1f, stats().fuelPerLap); }
     // Picks the tyre-life option nearest the given wear rate.
     void setWearRate(float rate);
+    bool twoCompoundRule() const { return tyreRule == 1 || (tyreRule == 0 && laps > 20); }
+    int twoCompoundsArg() const { return tyreRule == 0 ? -1 : tyreRule == 1 ? 1 : 0; }  // RaceConfig::twoCompounds
 };
 
 enum class MenuAction { None, Start, Quit, TrackChanged };
 
 // Keyboard and mouse input for the menu. `hits` holds the clickable rectangles the
 // last draw produced (row arrows and the start button).
-// row: setup row, or 100 + car * 2 + column on the grid page; dir -1 / +1 = arrow, 0 = select.
+// row: setup row, or 100 + car * kGridCols + column on the grid page; dir -1 / +1 = arrow, 0 = select.
 struct MenuHit { float x, y, w, h; int row; int dir; };
 MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits);
