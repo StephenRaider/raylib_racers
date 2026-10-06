@@ -102,6 +102,10 @@ if(RR_BUILD_BOTS)
   # Fast tyre wear forces a stop: the racingline robot must pit and finish.
   add_test(NAME race_pit_stop COMMAND rr_race --laps 6 --wear-rate 6 --quiet --car racingline)
   set_tests_properties(race_pit_stop PROPERTIES PASS_REGULAR_EXPRESSION "racingline +[0-9]+:[0-9.]+ .* [1-9] \\(L[0-9]")
+  # After the flag every car drives into the pit lane and parks.
+  add_test(NAME race_cool_down COMMAND rr_race --laps 1 --quiet --cool-down
+           --car racingline --car racingline --car racingline --car gapfollow --car simple)
+  set_tests_properties(race_cool_down PROPERTIES PASS_REGULAR_EXPRESSION "cool-down: 5/5 cars parked")
   # Asymmetric cars: a spec file and development tokens load; an over-budget car is refused.
   add_test(NAME race_specs COMMAND rr_race --laps 1 --quiet --car racingline --spec f1_2006
            --car racingline --dev "top_speed=5,downforce=-3,pit_crew=4")

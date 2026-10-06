@@ -41,11 +41,13 @@ std::unique_ptr<rr::Race> makeRace(const rr::RaceConfig& cfg, const Paths& paths
 // other robot library found in the bot folders (your own robots show up here).
 std::vector<Algorithm> listAlgorithms(const Paths& paths) {
     std::vector<Algorithm> algos = {
+        // The racingline family first: the default grid uses these four.
         {"racingline", "racingline", ""},
-        {"gapfollow", "gapfollow", ""},
+        {"racingline aggressive", "racingline", "grip=0.85,brake=0.75,push=1.3,attack=1.4"},
         {"racingline safe", "racingline", "grip=0.75"},
-        {"gapfollow safe", "gapfollow", "speed=0.85"},
         {"racingline steady", "racingline", "grip=0.7,brake=0.6"},
+        {"gapfollow", "gapfollow", ""},
+        {"gapfollow safe", "gapfollow", "speed=0.85"},
         {"gapfollow steady", "gapfollow", "speed=0.8"},
         {"simple", "simple", ""},
     };
@@ -181,7 +183,7 @@ int main(int argc, char** argv) {
     menu.liveryCount = liveryCount;
     if (cliEntries.empty()) {
         const int n = liveryTable().empty() ? 7 : liveryCount;
-        for (int i = 0; i < n; ++i) menu.carAlgo.push_back(i % 6);  // the six racing presets, not "simple"
+        for (int i = 0; i < n; ++i) menu.carAlgo.push_back(i % 4);  // the four racingline presets
     } else {
         for (const rr::EntrySpec& e : cliEntries) {
             int found = -1;
@@ -195,7 +197,7 @@ int main(int argc, char** argv) {
         }
     }
     menu.maxCars = (int)menu.carAlgo.size();
-    while ((int)menu.carAlgo.size() < liveryCount) menu.carAlgo.push_back((int)menu.carAlgo.size() % 6);
+    while ((int)menu.carAlgo.size() < liveryCount) menu.carAlgo.push_back((int)menu.carAlgo.size() % 4);
     menu.maxCars = std::max(menu.maxCars, liveryCount);
     for (int i = 0; i < menu.maxCars; ++i) menu.carLivery.push_back(i % liveryCount);
     menu.cars = cliEntries.empty() ? (int)std::min<size_t>(menu.maxCars, liveryTable().empty() ? 7 : liveryCount)
@@ -293,7 +295,7 @@ int main(int argc, char** argv) {
     std::vector<MenuHit> menuHits;
 
     if (shotMode && !inMenu)
-        while (!race->isOver() && race->time() < cfg.screenshotAt) race->step();
+        while (!race->cooledDown() && race->time() < cfg.screenshotAt) race->step();
     // --focus N picks a car; without it the camera follows whoever leads.
     if (cfg.focus >= 0 && cfg.focus < (int)race->cars().size()) {
         st.focus = cfg.focus;
@@ -476,7 +478,7 @@ int main(int argc, char** argv) {
                     simDebt += frameDt * st.timeScale;
                     long long steps = (long long)(simDebt / race->dt());
                     simDebt -= steps * race->dt();
-                    for (long long i = 0; i < steps && !race->isOver(); ++i) race->step();
+                    for (long long i = 0; i < steps && !race->cooledDown(); ++i) race->step();
                 } else if (IsKeyPressed(KEY_N)) {
                     race->advance(1.0 / race->config().robotHz);
                 }
@@ -489,7 +491,7 @@ int main(int argc, char** argv) {
         }
         // engine sound only while racing at (close to) real time
         audio.update(*race, renderer->camera, st.focus,
-                     !inMenu && !st.paused && !st.muted && st.timeScale <= 2.0f && !race->isOver(), frameDt);
+                     !inMenu && !st.paused && !st.muted && st.timeScale <= 2.0f && !race->cooledDown(), frameDt);
 
         BeginDrawing();
         ClearBackground(BLACK);

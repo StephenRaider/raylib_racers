@@ -15,9 +15,10 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   barrier and car-to-car collisions, lap timing and classification. Fixed 500 Hz
   physics, robots called at 50 Hz, fully deterministic.
 - **Race mechanics**: fuel load and consumption, tyre wear with grip loss
-  (soft, medium and hard compounds), damage that costs downforce, slipstream,
+  (soft, medium and hard compounds), damage that costs downforce, power and grip, slipstream,
   and a pit lane with a speed limiter, a box per car and timed service (fuel,
-  tyres, repairs).
+  tyres, repairs). After the flag each car runs a slow lap into the pit lane
+  and parks behind its box.
 - **Robot API** (`include/rr/robot_api.h`): one C header. Sensors follow the
   TORCS SCR championship (angle, track position, 19 range finders, 36 opponent
   sectors) plus the full track geometry and the car's pose, as TORCS robots get,
@@ -72,7 +73,8 @@ ctest --test-dir build          # quick smoke races
 `--car` takes a robot name from `build/bots/` or a path to any robot library;
 `--params`, `--name`, `--spec` and `--dev` apply to the car before them. `--help` lists all
 options (noise on the range finders, physics step, robot rate, time limit,
-`--fuel-rate` and `--wear-rate` multipliers).
+`--fuel-rate` and `--wear-rate` multipliers, `--cool-down` to run on until the
+cars have parked after the flag).
 
 The viewer opens on a **race setup** menu: track, race length, tyre life
 (in laps of the chosen track; the menu measures a lap first), number of cars
@@ -81,7 +83,11 @@ The viewer opens on a **race setup** menu: track, race length, tyre life
 library in `bots/` shows up there). **Weekend** mode runs qualifying first:
 each car goes out alone for an out lap and two flying laps, and the fastest
 lap takes pole. `Enter` skips the current run, `Shift+Enter` the rest of
-qualifying. `--no-menu` skips the menu.
+qualifying. `--no-menu` skips the menu. The default grid runs the four
+`racingline` variants in turn: standard, aggressive (`grip=0.85,brake=0.75,
+push=1.3,attack=1.4`: brakes later, learns closer to the limit, follows closer
+and goes for gaps sooner), safe (`grip=0.75`) and steady (`grip=0.7,brake=0.6`);
+`gapfollow` and `simple` are still on the Grid page.
 
 The engine sound is synthesised from each car's revs and throttle (a V10 with
 overrun pops and a rev limiter), for the cars nearest the camera. `M` mutes it;

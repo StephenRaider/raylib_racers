@@ -35,7 +35,8 @@ std::string usage(const char* prog, bool viewer) {
         "Output\n"
         "  --json FILE            write results as JSON\n"
         "  --telemetry DIR        write one CSV per car at the robot rate\n"
-        "  --quiet                print only the results\n";
+        "  --quiet                print only the results\n"
+        "  --cool-down            after the flag, run on until the cars have parked in the pit lane\n";
     if (viewer) {
         u += "Viewer\n"
              "  --width N --height N  window size (default 1600x900)\n"
@@ -83,6 +84,7 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (a == "--json") cfg.jsonOut = need(i, a);
             else if (a == "--telemetry") cfg.telemetryDir = need(i, a);
             else if (a == "--quiet") cfg.quiet = true;
+            else if (a == "--cool-down") cfg.coolDown = true;
             else if (viewer && a == "--width") cfg.width = std::stoi(need(i, a));
             else if (viewer && a == "--height") cfg.height = std::stoi(need(i, a));
             else if (viewer && a == "--fullscreen") cfg.fullscreen = true;

@@ -10,7 +10,7 @@
 
 #include "rr/robot_api.h"
 
-#define RR_CAR_GAP 2.4f /* centre-to-centre lateral spacing for two cars side by side */
+#define RR_CAR_GAP 2.7f /* centre-to-centre lateral spacing for two cars side by side */
 
 /* --------------------------------------------------------------- traffic */
 

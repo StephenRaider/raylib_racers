@@ -71,9 +71,23 @@ struct Car {
     float penaltyTime = 0;      // s added to the race time
     double raceTime() const { return finishTime + penaltyTime; }
 
+    // after the flag: a cool-down lap into the pit lane
+    bool parked = false;
+    int parkSlot = -1;          // spot in the pit lane, 0 = furthest down
+
     FILE* telemetry = nullptr;
 
     int currentLap(int raceLaps) const { return std::min(raceLaps, std::max(1, lapsDone + 1)); }
+};
+
+// A car-to-car impact, for analysis (and later, stewarding).
+struct Contact {
+    double time;
+    int a, b;          // a is the car behind (by track distance) at the moment of contact
+    float speed;       // closing speed along the contact normal, m/s
+    float ds;          // track distance from a to b, m (+ = b ahead)
+    float lateral;     // b's lateral minus a's, m
+    float relYaw;      // b's heading minus a's, rad
 };
 
 class Race {
@@ -89,7 +103,10 @@ public:
 
     void step();                // one physics step of cfg.dt
     void advance(double seconds);  // as many steps as fit
-    bool isOver() const { return over_; }
+    bool isOver() const { return over_; }           // results are final
+    // After the flag the cars drive a cool-down lap into the pit lane and park;
+    // step() keeps simulating that until this is true.
+    bool cooledDown() const;
 
     double time() const { return time_; }
     float dt() const { return cfg_.dt; }
@@ -98,6 +115,7 @@ public:
     const std::vector<Car>& cars() const { return cars_; }
     const std::vector<int>& order() const { return order_; }  // car indices by position
     const RaceConfig& config() const { return cfg_; }
+    const std::vector<Contact>& contacts() const { return contacts_; }
 
     void printResults(FILE* out) const;
     bool writeJson(const std::string& path, double wallSeconds) const;
@@ -113,6 +131,7 @@ private:
     void writeTelemetry(const Car& c);
     void updatePit(Car& c);
     void updateBlueFlags();
+    RRControl coolDownControl(Car& c);
     float slipstream(const Car& c) const;
     void finishService(Car& c);
     float wrapDs(float ds) const;
@@ -126,6 +145,9 @@ private:
     int robotPeriod_ = 10;
     bool over_ = false;
     double leaderFinish_ = -1;
+    double overTime_ = 0;
+    std::vector<Contact> contacts_;
+    int parkedSlots_ = 0;
     double maxTime_ = 0;
     std::mt19937_64 rng_;
 };
