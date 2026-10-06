@@ -142,21 +142,21 @@
       ]
     },
     {
-      "team": "Neon Kick",
-      "livery": "liveries/neon_black.png",
+      "team": "Black Gold GP",
+      "livery": "liveries/black_gold.png",
       "cars": [
         {
           "number": 27,
-          "livery": "liveries/numbered/neon_black_27.png"
+          "livery": "liveries/numbered/black_gold_27.png"
         },
         {
           "number": 77,
-          "livery": "liveries/numbered/neon_black_77.png"
+          "livery": "liveries/numbered/black_gold_77.png"
         }
       ],
       "number_colour": [
-        60,
-        255,
+        205,
+        165,
         70
       ]
     },

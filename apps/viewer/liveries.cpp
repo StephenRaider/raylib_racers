@@ -18,7 +18,7 @@ Color schemeColor(const std::string& key) {
         {"rosso", {220, 35, 35, 255}},        {"papaya", {255, 128, 0, 255}},
         {"silver_teal", {0, 205, 185, 255}},  {"midnight", {60, 80, 175, 255}},
         {"racing_green", {0, 140, 95, 255}},  {"blue_pink", {255, 90, 170, 255}},
-        {"white_navy", {235, 235, 240, 255}}, {"neon_black", {60, 255, 70, 255}},
+        {"white_navy", {235, 235, 240, 255}}, {"black_gold", {205, 165, 70, 255}},
         {"sunburst", {250, 205, 0, 255}},     {"steel_red", {150, 158, 170, 255}},
     };
     for (const K& k : known)
