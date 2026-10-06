@@ -15,6 +15,7 @@
 #include "raylib.h"
 #include "renderer.hpp"
 #include "rlgl.h"
+#include "spec.hpp"
 
 #ifndef RR_SOURCE_DIR
 #define RR_SOURCE_DIR "."
@@ -42,10 +43,13 @@ std::unique_ptr<rr::Race> makeRace(const rr::RaceConfig& cfg, const Paths& paths
 std::vector<Algorithm> listAlgorithms(const Paths& paths) {
     std::vector<Algorithm> algos = {
         // The racingline family first: the default grid uses these four.
-        {"racingline", "racingline", ""},
-        {"racingline aggressive", "racingline", "grip=0.85,brake=0.75,push=1.3,attack=1.4,heat=15"},
-        {"racingline safe", "racingline", "grip=0.75"},
-        {"racingline steady", "racingline", "grip=0.7,brake=0.6,heat=0"},
+        // Each style has the team stats that suit it (40 points over 8 stats): the
+        // aggressive driver needs tyre management, the steady one can spend on speed.
+        {"racingline", "racingline", "", ""},
+        {"racingline aggressive", "racingline", "grip=0.85,brake=0.75,push=1.3,attack=1.4,heat=15",
+         "tire_management=8,pit_stop=4,fuel_efficiency=4,brakes=4"},
+        {"racingline safe", "racingline", "grip=0.75", ""},
+        {"racingline steady", "racingline", "grip=0.7,brake=0.6,heat=0", "tire_management=3,top_speed=6,acceleration=6"},
         {"gapfollow", "gapfollow", ""},
         {"gapfollow safe", "gapfollow", "speed=0.85"},
         {"gapfollow steady", "gapfollow", "speed=0.8"},
@@ -202,9 +206,55 @@ int main(int argc, char** argv) {
     menu.maxCars = std::max(menu.maxCars, liveryCount);
     for (int i = 0; i < menu.maxCars; ++i) menu.carLivery.push_back(i % liveryCount);
     menu.carTires.resize(menu.maxCars, 0);
+
+    // Teams (liveries grouped by team name) and their stats.
+    {
+        std::vector<std::string> names;
+        menu.slotTeam.assign(liveryTable().size(), -1);
+        for (int slot = 0; slot < (int)liveryTable().size(); ++slot) {
+            const std::string& team = liveryTable()[slot].team;
+            int t = (int)(std::find(names.begin(), names.end(), team) - names.begin());
+            if (t == (int)names.size()) {
+                names.push_back(team);
+                menu.teamSlots.emplace_back();
+            }
+            menu.teamSlots[t].push_back(slot);
+            menu.slotTeam[slot] = t;
+        }
+        std::vector<std::string> specDirs;
+        for (const auto& d : paths.tracks) specDirs.push_back((std::filesystem::path(d).parent_path() / "specs").string());
+        specDirs.push_back("specs");
+        rr::DevRules rules;
+        const std::string rulesPath = rr::findDataFile(cfg.devRules, specDirs);
+        if (!rulesPath.empty() && rr::loadDevRules(rulesPath, rules, &err)) {
+            for (const auto& c : rules.categories) {
+                menu.statRules.keys.push_back(c.key);
+                menu.statRules.labels.push_back(c.label);
+            }
+            menu.statRules.budget = rules.budget;
+            menu.statRules.min = rules.minPoints;
+            menu.statRules.max = rules.maxPoints;
+            menu.statRules.neutral = rules.neutral;
+        }
+        menu.teamStats.assign(menu.teamSlots.size(), menu.statRules.parse(""));
+    }
     menu.tyreRule = cfg.twoCompounds < 0 ? 0 : cfg.twoCompounds ? 1 : 2;
     menu.cars = cliEntries.empty() ? (int)std::min<size_t>(menu.maxCars, liveryTable().empty() ? 7 : liveryCount)
                                    : (int)cliEntries.size();
+    if (cliEntries.empty() && !menu.teamSlots.empty()) {
+        menu.teams = (int)menu.teamSlots.size();
+        menu.drivers = 2;
+        menu.layoutGrid();
+    } else {
+        menu.teams = std::max(1, (menu.cars + 1) / 2);
+    }
+    // Team stats: from --dev on the command line, else the style of each team's last driver.
+    for (int i = 0; i < menu.cars; ++i) {
+        const int t = menu.teamOfCar(i);
+        if (t < 0) continue;
+        if (i < (int)cliEntries.size() && !cliEntries[i].dev.empty()) menu.teamStats[t] = menu.statRules.parse(cliEntries[i].dev);
+        else if (i >= (int)cliEntries.size()) menu.styleChanged(i);
+    }
     // Entries for the first `cars` cars of the grid; names carry the race number.
     auto gridEntries = [&]() {
         std::vector<rr::EntrySpec> entries;
@@ -216,6 +266,9 @@ int main(int argc, char** argv) {
             if (!liveryTable().empty()) name = std::to_string(liveryTable()[slot].number) + " " + name;
             rr::EntrySpec e{a.robot, a.params, name};
             e.tires = menu.carTires[i];
+            const int team = menu.teamOfCar(i);
+            if (team >= 0) e.dev = menu.statRules.format(menu.teamStats[team]);
+            else if (i < (int)cliEntries.size()) e.dev = cliEntries[i].dev;
             entries.push_back(e);
             slots.push_back(slot);
         }

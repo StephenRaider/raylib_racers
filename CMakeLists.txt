@@ -108,8 +108,8 @@ if(RR_BUILD_BOTS)
   set_tests_properties(race_cool_down PROPERTIES PASS_REGULAR_EXPRESSION "cool-down: 5/5 cars parked")
   # Asymmetric cars: a spec file and development tokens load; an over-budget car is refused.
   add_test(NAME race_specs COMMAND rr_race --laps 1 --quiet --car racingline --spec f1_2006
-           --car racingline --dev "top_speed=5,downforce=-3,pit_crew=4")
-  add_test(NAME race_dev_budget COMMAND rr_race --laps 1 --quiet --car racingline --dev "top_speed=5,downforce=5,handling=5")
+           --car racingline --dev "top_speed=8,downforce=2,pit_stop=5")
+  add_test(NAME race_dev_budget COMMAND rr_race --laps 1 --quiet --car racingline --dev "top_speed=10,downforce=10,handling=10")
   set_tests_properties(race_dev_budget PROPERTIES WILL_FAIL TRUE)
 endif()
 

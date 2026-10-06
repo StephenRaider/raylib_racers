@@ -283,8 +283,8 @@ enough to plan a racing line (see `bots/racingline`).
 coefficients (`drag = drag_coeff * v²`, `downforce = downforce_coeff * v²`),
 gearing and brake force, so a planner can estimate cornering and braking limits.
 Since ABI 3 it also has the CG height, track widths, aero balance, brake bias,
-peak power and the multipliers a car's development gives it (tyre wear, fuel
-use, pit crew time): cars in one race can differ (see "Car specs" in the README).
+peak power and the multipliers its team stats give it (tyre wear, fuel
+use, pit crew time): cars in one race can differ (see "Car specs and team stats" in the README).
 
 ## Parameters and experiments
 

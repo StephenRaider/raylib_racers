@@ -52,6 +52,7 @@ private:
     void drawMinimap(const rr::Race& race, const HudState& st);
     void drawCarPanel(const rr::Race& race, const HudState& st);
     void drawHelp();
+    void drawTeamsPage(const MenuState& m, std::vector<MenuHit>& hits);
     void drawGridPage(const MenuState& m, std::vector<MenuHit>& hits);
     void drawQualiTower(const rr::Race& race, const HudState& st);
 public:
