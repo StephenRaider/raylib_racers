@@ -78,11 +78,12 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         drawTower(race, st);
         drawMinimap(race, st);
         drawCarPanel(race, st);
-        const char* hint = "F1 help   Tab next car   L follow leader   C camera   Space pause   +/- speed";
+        const char* hint = "F1 help   Tab next car   L follow leader   C camera   M sound   Space pause   +/- speed   Esc menu";
         text(hint, 18, GetScreenHeight() - 30.0f, 16, Fade(kText, 0.75f));
         // camera and focus mode, top centre
         char buf[96];
-        std::snprintf(buf, sizeof buf, "%s CAM   %s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED");
+        std::snprintf(buf, sizeof buf, "%s CAM   %s%s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED",
+                      st.muted ? "   SOUND OFF" : "");
         float w = width(buf, 15, true) + 28;
         float x = (GetScreenWidth() - w) / 2;
         panel({x, 12, w, 30});
@@ -299,6 +300,7 @@ void Hud::drawHelp() {
         "Mouse drag    orbit (orbit cam)", "Wheel         zoom (orbit, heli, top)",
         "Space         pause",          "+ / -         simulation speed",  "N             single step (paused)",
         "R             restart race",   "P             robot paths",       "S             range finders",
+        "M             engine sound on / off", "Esc           race setup menu",
         "H             hide HUD",       "F12           screenshot",        "F1            close help"};
     const int n = sizeof(lines) / sizeof(lines[0]);
     float w = 760, h = 70 + n * 24.0f;
@@ -332,4 +334,81 @@ void Hud::drawResults(const rr::Race& race) {
         textRight(buf, x + w - 24, ry + 2, 15, kDim, false, true);
         ry += 30;
     }
+}
+
+void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
+    hits.clear();
+    const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.35f));
+    const float w = 720, rowH = 64, h = 150 + MenuState::kRows * rowH + 50;
+    const float x = (sw - w) / 2, y = std::max(20.0f, (sh - h) / 2);
+    panel({x, y, w, h}, 0.88f);
+    text("RAYLIB RACERS", x + 32, y + 26, 20, kAccent, true);
+    text("Race setup", x + 32, y + 52, 36, kText, true);
+
+    const TrackStats& ts = m.stats();
+    char val[96], note[160];
+    float ry = y + 120;
+    for (int row = 0; row < MenuState::kRows; ++row, ry += rowH) {
+        const bool sel = row == m.row;
+        const Rectangle r = {x + 20, ry, w - 40, rowH - 8};
+        hits.push_back({r.x, r.y, r.width, r.height, row, 0});
+        if (row == 4) {  // start button
+            Rectangle b = {x + 20, ry + 6, w - 40, rowH - 4};
+            hits.back() = {b.x, b.y, b.width, b.height, row, 0};
+            DrawRectangleRounded(b, 0.25f, 8, sel ? kAccent : Fade(kAccent, 0.75f));
+            const char* s = "START RACE";
+            text(s, b.x + (b.width - width(s, 26, true)) / 2, b.y + 15, 26, Color{20, 20, 24, 255}, true);
+            continue;
+        }
+        if (sel) DrawRectangleRounded(r, 0.2f, 8, Fade(WHITE, 0.08f));
+        const char* label = row == 0 ? "Track" : row == 1 ? "Race length" : row == 2 ? "Tyre life" : "Cars";
+        note[0] = 0;
+        switch (row) {
+            case 0:
+                std::snprintf(val, sizeof val, "%s", ts.title.c_str());
+                std::snprintf(note, sizeof note, "%.2f km, lap about %d:%02d", ts.length / 1000.0f,
+                              (int)ts.lapTime / 60, (int)ts.lapTime % 60);
+                break;
+            case 1: {
+                std::snprintf(val, sizeof val, "%d lap%s", m.laps, m.laps == 1 ? "" : "s");
+                int mins = (int)std::lround(m.laps * ts.lapTime / 60.0f);
+                float tank = m.lapsPerTank();
+                int stops = (int)std::ceil(m.laps / tank - 1e-3f) - 1;
+                std::snprintf(note, sizeof note, "about %d min.  Tank lasts %.0f laps: %s", std::max(1, mins), tank,
+                              stops <= 0 ? "no fuel stop" : stops == 1 ? "1 fuel stop" : (std::to_string(stops) + " fuel stops").c_str());
+                break;
+            }
+            case 2: {
+                int life = MenuState::kTyreLives[m.tyreLife];
+                if (life == 0) {
+                    std::snprintf(val, sizeof val, "no wear");
+                    std::snprintf(note, sizeof note, "tyres never wear out");
+                } else {
+                    std::snprintf(val, sizeof val, "%d laps", life);
+                    // compounds wear at 1.7x (soft) and 0.6x (hard) the medium rate
+                    std::snprintf(note, sizeof note, "soft %d, medium %d, hard %d laps before the grip falls away",
+                                  std::max(1, (int)std::lround(life / 1.7f)), life, (int)std::lround(life / 0.6f));
+                }
+                break;
+            }
+            default:
+                std::snprintf(val, sizeof val, "%d", m.cars);
+                std::snprintf(note, sizeof note, "one livery each");
+                break;
+        }
+        text(label, r.x + 16, r.y + 8, 21, sel ? kText : kDim, true);
+        if (note[0]) text(note, r.x + 16, r.y + 34, 15, kDim);
+        // value with arrows, right-aligned
+        const float vr = r.x + r.width - 16;
+        const float vw = std::max(150.0f, width(val, 22, true));
+        const float ax = vr - vw - 44;
+        text("<", ax, r.y + 12, 24, sel ? kAccent : kDim, true);
+        text(">", vr - 12, r.y + 12, 24, sel ? kAccent : kDim, true);
+        hits.push_back({ax - 10, r.y, 36, r.height, row, -1});
+        hits.push_back({vr - 22, r.y, 36, r.height, row, 1});
+        text(val, ax + 28 + (vw - width(val, 22, true)) / 2, r.y + 13, 22, kText, true);
+    }
+    const char* help = "Up/Down choose    Left/Right change (Shift: bigger steps)    Enter start    Esc quit";
+    text(help, x + (w - width(help, 15)) / 2, y + h - 34, 15, kDim);
 }

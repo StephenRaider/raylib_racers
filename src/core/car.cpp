@@ -6,8 +6,9 @@ namespace rr {
 
 float CarParams::engineTorque(float rpm) const {
     // Piecewise-linear full-throttle torque curve.
-    static const float pts[][2] = {{0, 180},    {1000, 200}, {3000, 330}, {5000, 440},
-                                   {7500, 500}, {9000, 440}, {9500, 0}};
+    // A 3-litre V10 of the mid-2000s: ~350 N m, ~660 kW at 18,500 rpm.
+    static const float pts[][2] = {{0, 150},     {4000, 220},  {8000, 290},  {12000, 330},
+                                   {16000, 352}, {18500, 340}, {19000, 300}, {19400, 0}};
     const int n = sizeof(pts) / sizeof(pts[0]);
     if (rpm <= pts[0][0]) return pts[0][1];
     for (int i = 1; i < n; ++i) {
@@ -116,8 +117,8 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
                 float rpm = rpmFor(p, c.vx, c.gear);
                 if (c.gear < p.numGears && rpm > 0.965f * p.maxRpm) {
                     c.gear++;
-                } else if (c.gear > 1 && rpm < 0.45f * p.maxRpm &&
-                           rpmFor(p, c.vx, c.gear - 1) < 0.8f * p.maxRpm) {
+                } else if (c.gear > 1 && rpm < 0.62f * p.maxRpm &&
+                           rpmFor(p, c.vx, c.gear - 1) < 0.9f * p.maxRpm) {  // keep the revs up, F1 style
                     c.gear--;
                 }
             }

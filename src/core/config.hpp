@@ -34,6 +34,9 @@ struct RaceConfig {
     float screenshotAt = -1;   // race time; the viewer exits after saving
     int camera = 0;
     int focus = -1;            // car index to follow (-1: the leader)
+    bool noMenu = false;       // start racing straight away
+    bool mute = false;
+    std::string soundTest;     // render the focused car's engine to this WAV and exit
 };
 
 // Parses the shared command line. Returns false and fills err on bad input;

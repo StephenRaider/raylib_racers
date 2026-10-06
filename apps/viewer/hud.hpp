@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "raylib.h"
+#include "menu.hpp"
 #include "race.hpp"
 #include "renderer.hpp"
 
@@ -14,6 +15,7 @@ struct HudState {
     CamMode camera = CAM_CHASE;
     bool showHud = true;
     bool showHelp = false;
+    bool muted = false;
     ViewOptions view;
 };
 
@@ -23,6 +25,8 @@ public:
     void init(const rr::Track& track, const std::string& assetsDir);
     void shutdown();
     void draw(const rr::Race& race, const HudState& st);
+    // The race setup screen; fills `hits` with its clickable areas.
+    void drawMenu(const MenuState& m, std::vector<MenuHit>& hits);
 
 private:
     void text(const char* s, float x, float y, float size, Color c, bool bold = false, bool mono = false);
