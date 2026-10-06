@@ -31,7 +31,8 @@ add_library(rr_core STATIC
   src/core/car.cpp
   src/core/race.cpp
   src/core/robot_loader.cpp
-  src/core/config.cpp)
+  src/core/config.cpp
+  src/core/spec.cpp)
 target_include_directories(rr_core PUBLIC include src/core)
 target_compile_options(rr_core PRIVATE ${RR_WARNINGS})
 target_compile_definitions(rr_core PUBLIC RR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -101,6 +102,11 @@ if(RR_BUILD_BOTS)
   # Fast tyre wear forces a stop: the racingline robot must pit and finish.
   add_test(NAME race_pit_stop COMMAND rr_race --laps 6 --wear-rate 6 --quiet --car racingline)
   set_tests_properties(race_pit_stop PROPERTIES PASS_REGULAR_EXPRESSION "racingline +[0-9]+:[0-9.]+ .* [1-9] \\(L[0-9]")
+  # Asymmetric cars: a spec file and development tokens load; an over-budget car is refused.
+  add_test(NAME race_specs COMMAND rr_race --laps 1 --quiet --car racingline --spec f1_2006
+           --car racingline --dev "top_speed=5,downforce=-3,pit_crew=4")
+  add_test(NAME race_dev_budget COMMAND rr_race --laps 1 --quiet --car racingline --dev "top_speed=5,downforce=5,handling=5")
+  set_tests_properties(race_dev_budget PROPERTIES WILL_FAIL TRUE)
 endif()
 
 # ---------------------------------------------------------------- install
@@ -111,4 +117,4 @@ endif()
 if(RR_BUILD_BOTS)
   install(TARGETS simple gapfollow racingline LIBRARY DESTINATION bots RUNTIME DESTINATION bots)
 endif()
-install(DIRECTORY tracks assets DESTINATION .)
+install(DIRECTORY tracks assets specs DESTINATION .)

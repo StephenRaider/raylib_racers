@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (cfg.entries.empty()) {
-        cfg.entries = {{"racingline", "", ""}, {"gapfollow", "", ""}, {"simple", "", ""}};
+        cfg.entries = {{"racingline", "", "", "", ""}, {"gapfollow", "", "", "", ""}, {"simple", "", "", "", ""}};
         if (!cfg.quiet) std::printf("no --car given, racing the example robots\n");
     }
 

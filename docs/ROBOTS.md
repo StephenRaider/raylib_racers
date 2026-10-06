@@ -45,7 +45,7 @@ be named as `--car tiny`.
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; `abi_version` must equal `RR_ABI_VERSION` |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (the host also loads robots built for ABI 2) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -85,6 +85,22 @@ Consumables and pit:
 | `tire_compound`, `laps_on_tires` | `RR_TIRE_SOFT` / `MEDIUM` / `HARD`, laps since they were fitted |
 | `pit_state` | `RR_PIT_NONE`, `RR_PIT_LANE` (speed limited), `RR_PIT_SERVICE` (in the box, controls ignored), `RR_PIT_DONE` (serviced, still in the lane) |
 | `pit_stops`, `pit_box_s`, `service_time_left` | completed stops, where this car's box is (track `s`), time left while serviced |
+
+What the tyres are doing (ABI 3), the signals a driver feels through the seat:
+
+| Field | Meaning |
+|---|---|
+| `grip_use[2]` | front, rear: force asked of the axle over what it can give, worst wheel. ~0.9-1.0 is the limit; past ~1.1 the axle is sliding. Front high and rear low = understeer; rear high off throttle = oversteer; rear high on throttle = wheelspin |
+| `slip_angle[2]` | front, rear slip angles, rad. Rear larger than front = the rear is stepping out |
+| `accel_x`, `accel_y` | body-frame acceleration, m/s² (y + = left), as the suspension feels it |
+| `wheel_load[4]` | N on each wheel: front left, front right, rear left, rear right |
+
+Flags (ABI 3):
+
+| Field | Meaning |
+|---|---|
+| `blue_flag`, `blue_flag_car`, `blue_flag_ds` | a car that is lapping you is within `RR_BLUE_FLAG_RANGE` (60 m or 1.2 s) behind: let it by. Holding it up within 30 m for more than `RR_BLUE_FLAG_LIMIT` (8 s) costs a `RR_BLUE_FLAG_PENALTY` (5 s) time penalty, added to your race time |
+| `penalties`, `penalty_time` | time penalties so far and the seconds they add |
 
 Other cars, for racecraft: `nearby[num_nearby]` lists up to 8 cars, nearest
 first by track distance. Each `RROpponent` has `ds` (track distance, + ahead),
@@ -165,7 +181,15 @@ lasts, and drives a blended path into and out of its box.
 - **Defend**: when a car on the same lap closes within 25 m behind, cover the
   inside of the next corner with one move, hold it for a few seconds, then
   return to the line.
-- **Space**: never steer into a car that is alongside.
+- **Space**: never steer into a car that is alongside, or across one that is
+  closing from behind (`rr_side_limits`).
+- **Blue flags**: move to the side away from the lapping car and lift a
+  little until it is by (`rr_blue_flag`).
+- **The limit**: it learns how much grip each 20 m of track really has. A
+  stretch where the tyres slid (`grip_use` past 1.1) or the car went off gets
+  slower, and so does the braking zone before it; stretches driven well inside
+  the limit on clean laps get a little faster each lap (up to `push`). On top
+  of that `rr_grip_guard` manages wheelspin and catches oversteer.
 
 Its `pass=0` and `defend=0` parameters switch the behaviours off for
 comparison.
@@ -179,6 +203,9 @@ enough to plan a racing line (see `bots/racingline`).
 `RRCarSpec` gives mass, dimensions, steering lock, tyre friction, aero
 coefficients (`drag = drag_coeff * v²`, `downforce = downforce_coeff * v²`),
 gearing and brake force, so a planner can estimate cornering and braking limits.
+Since ABI 3 it also has the CG height, track widths, aero balance, brake bias,
+peak power and the multipliers a car's development gives it (tyre wear, fuel
+use, pit crew time): cars in one race can differ (see "Car specs" in the README).
 
 ## Parameters and experiments
 
@@ -200,11 +227,21 @@ used) gives the same result, so differences come from your change, not chance.
 - `rr_params.h`: read numbers out of the params string.
 - `rr_recovery.h`: drop-in "get unstuck" behaviour (U-turn when facing the
   wrong way, reverse out of a barrier). Call `rr_recover()` first in `drive()`.
+- `rr_awareness.h`: racecraft and grip helpers all three examples use.
+  `rr_side_limits()` narrows the lateral range you may move into around cars
+  alongside or closing from behind; `rr_follow_speed()` is a speed cap for not
+  running into the car ahead; `rr_blue_flag()` says where to go and how much
+  to lift under a blue flag; `rr_grip_guard()` (call it last) is traction
+  control plus oversteer and understeer handling from `grip_use` and
+  `slip_angle`.
 
 ## The example robots
 
 | Robot | Language | Uses | Idea |
 |---|---|---|---|
-| `simple` | C | SCR sensors only | align with the track axis, target speed from the free distance ahead (never pits) |
-| `gapfollow` | C++ | SCR sensors only | steer towards the longest forward range finder, dodge cars ahead (never pits) |
-| `racingline` | C++ | track geometry + pose + nearby cars | minimum-curvature line, friction-limited speed profile re-planned for fuel and tyres, pure pursuit, pit strategy, overtaking and defending |
+| `simple` | C | SCR sensors + nearby cars | align with the track axis, target speed from the free distance ahead (never pits) |
+| `gapfollow` | C++ | SCR sensors + nearby cars | steer towards the longest forward range finder, dodge cars ahead (never pits) |
+| `racingline` | C++ | track geometry + pose + nearby cars | minimum-curvature line, friction-limited speed profile re-planned for fuel and tyres and learnt per stretch of track, pure pursuit, pit strategy, overtaking and defending |
+
+All three use `rr_awareness.h` for side awareness, following, blue flags and
+the grip guard.

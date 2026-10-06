@@ -1,5 +1,5 @@
 #pragma once
-// A small JSON reader for the viewer's own asset files (teams.json). Not a general
+// A small JSON reader for the project's own data files (car specs, teams.json). Not a general
 // validator: it accepts well-formed JSON and returns a null value on errors.
 #include <cstdlib>
 #include <cstring>

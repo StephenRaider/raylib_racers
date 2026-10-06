@@ -10,9 +10,10 @@ namespace {
 constexpr float kTwoPi = 6.28318530718f;
 
 // Engine orders, in multiples of the cycle frequency (rpm / 120). A V10 fires ten
-// times per cycle, so orders 10, 20, 30... carry most of the energy; the others come
-// from cylinder-to-cylinder differences and give the sound its rasp.
-constexpr int kOrders = 64;
+// times per cycle (order 10) and each bank five times (order 5); the crank turns twice
+// (order 2). Most of the weight sits on those low orders, so the sound has a body
+// instead of a whine; the orders above 10 roll off steeply and only give an edge.
+constexpr int kOrders = 48;
 
 struct OrderTable {
     float base[kOrders + 1];    // amplitude off throttle
@@ -23,19 +24,58 @@ struct OrderTable {
             h = h * 1664525u + 1013904223u;
             const float r = (h >> 8) / 16777216.0f;
             float a;
-            if (j % 10 == 0) a = 1.0f / (1.0f + 0.12f * (j / 10 - 1));   // firing harmonics
-            else if (j % 5 == 0) a = 0.32f;                               // bank-to-bank
-            else if (j % 2 == 0) a = 0.05f + 0.07f * r;                   // crank orders
-            else a = 0.02f + 0.05f * r;                                   // cam orders
-            base[j] = a * (j < 10 ? 0.55f : 1.0f);
-            bright[j] = a * (j >= 20 ? 0.9f : 0.35f);
+            switch (j) {
+                case 1: a = 0.55f; break;    // cycle: cylinder-to-cylinder lumpiness
+                case 2: a = 0.85f; break;    // crank
+                case 3: a = 0.35f; break;
+                case 4: a = 0.50f; break;
+                case 5: a = 1.00f; break;    // bank firing, the growl
+                case 10: a = 0.80f; break;   // firing
+                case 15: a = 0.30f; break;
+                case 20: a = 0.20f; break;   // a little scream on top
+                case 30: a = 0.08f; break;
+                default:
+                    if (j < 10) a = 0.22f + 0.18f * r;
+                    else a = (0.10f + 0.10f * r) * std::pow(10.0f / j, 1.6f);
+            }
+            // Off throttle the low orders fall away and it goes thin; on throttle they
+            // come back hard together with the firing harmonics.
+            base[j] = a * (j <= 5 ? 0.30f : j <= 10 ? 0.55f : 0.75f);
+            bright[j] = a * (j <= 10 ? 0.85f : 0.6f);
         }
         base[0] = bright[0] = 0;
     }
 };
 const OrderTable kTable;
 
+// Exhaust pipe resonances: fixed formants the harmonics sweep through as it revs.
+struct Formant { float hz, q, gain; };
+constexpr Formant kFormants[3] = {{165, 2.2f, 0.9f}, {420, 2.8f, 1.0f}, {1050, 3.0f, 0.35f}};
+
+// Asymmetric drive: tanh around an offset, so it adds even harmonics (grit) too.
+float drive(float x, float k) {
+    constexpr float b = 0.35f;
+    return (std::tanh(k * x + b) - std::tanh(b)) / k;
+}
+
 float softClip(float x) { return std::tanh(x); }
+
+// Topology-preserving state-variable band-pass coefficients for the formants.
+struct SvfCoef { float a1, a2, a3; };
+struct SvfTable {
+    SvfCoef c[3];
+    SvfTable() {
+        for (int k = 0; k < 3; ++k) {
+            const float g = std::tan(3.14159265f * kFormants[k].hz / EngineSynth::kRate), r = 1.0f / kFormants[k].q;
+            c[k].a1 = 1.0f / (1.0f + g * (g + r));
+            c[k].a2 = g * c[k].a1;
+            c[k].a3 = g * c[k].a2;
+        }
+    }
+};
+const SvfTable kSvf;
+
+constexpr float kOutGain = 2.4f;
 
 }  // namespace
 
@@ -86,6 +126,9 @@ void EngineSynth::render(float* out, int frames) {
     // per-sample smoothing: rpm ~8 ms (seamless shifts stay quick), throttle ~25 ms, gain ~40 ms
     const float kRpm = 1 - std::exp(-dt / 0.008f), kThr = 1 - std::exp(-dt / 0.025f), kGain = 1 - std::exp(-dt / 0.04f);
     const float kMaster = 1 - std::exp(-dt / 0.15f);
+    const float kPulseDecay = std::exp(-dt / 0.0012f);    // firing pulse ~1.2 ms
+    const float kRough = 1 - std::exp(-dt / 0.0004f);
+    const float kBody = 1 - std::exp(-kTwoPi * 140.0f * dt);  // body rumble below ~140 Hz
 
     for (int f = 0; f < frames; ++f) {
         master_ += (masterTarget_ - master_) * kMaster;
@@ -115,10 +158,23 @@ void EngineSynth::render(float* out, int frames) {
             c.phase -= std::floor(c.phase);
             const float th = kTwoPi * (float)c.phase;
             const float thr = c.throttle;
+            const float revs = std::min(1.0f, c.rpm / c.maxRpm);
+
+            // Firing pulses: ten per cycle, each a little stronger or weaker than the last,
+            // which roughens the tone the way a real engine's combustion does.
+            const int firing = (int)(c.phase * 10.0);
+            if (firing != c.firing) {
+                c.firing = firing;
+                c.pulseGain = 1.0f + (0.18f + 0.22f * thr) * (1.0f - 0.5f * revs) * noise();
+                c.pulse += c.pulseGain;
+            }
+            c.pulse *= kPulseDecay;
+            c.rough += (c.pulseGain - c.rough) * kRough;
+
             // Chebyshev recurrence: sin(j th) from sin((j-1) th) and sin((j-2) th)
             const float twoCos = 2.0f * std::cos(th);
             float s2 = 0, s1 = std::sin(th);
-            const int maxOrder = std::min(kOrders, (int)(16000.0f / cycleHz));
+            const int maxOrder = std::min(kOrders, (int)(12000.0f / cycleHz));
             float eng = 0;
             for (int j = 1; j <= maxOrder; ++j) {
                 eng += s1 * (kTable.base[j] + thr * kTable.bright[j]);
@@ -126,26 +182,45 @@ void EngineSynth::render(float* out, int frames) {
                 s2 = s1;
                 s1 = s0;
             }
-            eng *= 0.22f;
-
-            // exhaust resonance: a two-pole low-pass that opens up with throttle and revs
-            const float fc = 1800.0f + 9000.0f * thr * std::min(1.0f, c.rpm / c.maxRpm);
-            const float a = 1 - std::exp(-kTwoPi * fc * dt);
-            c.lp1 += (eng - c.lp1) * a;
-            c.lp2 += (c.lp1 - c.lp2) * a;
-            float sig = 0.65f * c.lp2 + 0.35f * eng;
+            eng *= 0.16f * c.rough;
 
             // intake and mechanical noise, band-passed, louder on throttle and at high revs
             const float n = noise();
-            c.noiseLp += (n - c.noiseLp) * 0.35f;
+            c.noiseLp += (n - c.noiseLp) * 0.25f;
             c.noiseHp += (c.noiseLp - c.noiseHp) * 0.02f;
-            const float revs = std::min(1.0f, c.rpm / c.maxRpm);
-            sig += (c.noiseLp - c.noiseHp) * (0.05f + 0.22f * thr) * revs;
 
-            // overrun crackle: off throttle at high revs, random pops
-            if (thr < 0.1f && c.rpm > 0.45f * c.maxRpm && noise() > 0.9993f) c.pop = 1.0f;
-            sig += c.pop * noise() * 0.9f;
-            c.pop *= 0.996f;
+            // overrun crackle: off throttle at high revs, random pops that bang through the pipes
+            if (thr < 0.1f && c.rpm > 0.4f * c.maxRpm && noise() > 0.9992f) c.pop = 1.0f;
+            const float popSig = c.pop * noise();
+            c.pop *= 0.9965f;
+
+            // exhaust: firing pulses, harmonics and pops ring the pipe resonances
+            const float exc = eng + (c.pulse - 1.6f) * (0.10f + 0.22f * thr) + popSig * 0.8f;
+            float formants = 0;
+            for (int k = 0; k < 3; ++k) {
+                const SvfCoef& q = kSvf.c[k];
+                const float v3 = exc - c.fz2[k];
+                const float v1 = q.a1 * c.fz1[k] + q.a2 * v3;
+                const float v2 = c.fz2[k] + q.a2 * c.fz1[k] + q.a3 * v3;
+                c.fz1[k] = 2 * v1 - c.fz1[k];
+                c.fz2[k] = 2 * v2 - c.fz2[k];
+                formants += kFormants[k].gain * v1;
+            }
+
+            // tailpipe low-pass: opens up a little with throttle and revs, never to a whine
+            const float fc = 900.0f + 4200.0f * thr * revs;
+            const float a = 1 - std::exp(-kTwoPi * fc * dt);
+            c.lp1 += (exc - c.lp1) * a;
+            c.lp2 += (c.lp1 - c.lp2) * a;
+
+            // body: the low thump under it all, strongest pulling away on throttle
+            c.body += (exc - c.body) * kBody;
+            c.body2 += (c.body - c.body2) * kBody;
+            const float bodyAmt = thr * (1.25f - 0.85f * revs);
+
+            float sig = 0.55f * c.lp2 + 0.12f * eng + 0.75f * formants + bodyAmt * c.body2;
+            sig += (c.noiseLp - c.noiseHp) * (0.03f + 0.10f * thr) * revs;
+            sig += popSig * 0.25f;  // a bit of raw crackle on top
 
             // rev limiter: the ignition cuts in and out at ~25 Hz when pinned against it
             if (c.rpm > 0.985f * c.maxRpm && thr > 0.5f) {
@@ -155,8 +230,13 @@ void EngineSynth::render(float* out, int frames) {
                 c.limiter = 1.0f;
             }
 
-            float level = (0.35f + 0.65f * thr) * (0.45f + 0.55f * revs) * c.limiter;
-            float s = softClip(sig * 2.2f * level) * 0.55f;
+            const float level = (0.3f + 0.7f * thr) * (0.5f + 0.5f * revs) * c.limiter;
+            // asymmetric saturation: dirtier the harder it is driven
+            float s = drive(sig * 2.0f * level, 1.5f + 2.5f * thr);
+            // remove the DC the asymmetric drive leaves behind
+            c.dcOut = s - c.dcIn + 0.9985f * c.dcOut;
+            c.dcIn = s;
+            s = softClip(c.dcOut * kOutGain) * 0.6f;
 
             // wind and tyres: low-passed noise rising with speed
             c.windLp += (n - c.windLp) * 0.04f;

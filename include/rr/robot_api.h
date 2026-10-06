@@ -29,7 +29,10 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 2
+#define RR_ABI_VERSION 3
+/* Robots built for ABI 2 still load: version 3 only appended fields to
+ * RRCarSpec and RRSensors. */
+#define RR_ABI_MIN_VERSION 2
 
 #define RR_NUM_TRACK_SENSORS 19
 #define RR_NUM_OPPONENT_SENSORS 36
@@ -112,6 +115,16 @@ typedef struct RRCarSpec {
     float max_brake_force;   /* N, total over all wheels */
     float fuel_capacity;     /* litres */
     float fuel_density;      /* kg per litre: fuel adds fuel * fuel_density to the mass */
+
+    /* --- ABI 3 --- */
+    float cg_height;         /* m */
+    float track_front, track_rear;  /* wheel-centre track widths, m */
+    float downforce_front;   /* aero balance: share of the downforce on the front axle */
+    float brake_front;       /* brake bias: share of the brake force on the front axle */
+    float max_power;         /* W, peak engine power */
+    float tire_wear_scale;   /* tyre wear multiplier from this car's development (1 = baseline) */
+    float fuel_use_scale;    /* fuel use multiplier from this car's development (1 = baseline) */
+    float pit_service_scale; /* pit crew time multiplier (1 = baseline, < 1 = faster crew) */
 } RRCarSpec;
 
 /* A nearby car, for racecraft (overtaking, defending, pit timing). */
@@ -189,7 +202,27 @@ typedef struct RRSensors {
     /* other cars, nearest first by track distance */
     int num_nearby;
     RROpponent nearby[RR_MAX_NEARBY];
+
+    /* --- ABI 3 --- */
+    /* What the tyres are doing: force asked of each axle over what it can give,
+     * worst wheel of the axle. Around 0.9-1.0 is the limit; past ~1.1 the axle
+     * is sliding (front: understeer; rear: oversteer or wheelspin). */
+    float grip_use[2];      /* front, rear */
+    float slip_angle[2];    /* front, rear, rad */
+    float accel_x, accel_y; /* body-frame acceleration, m/s^2 (y + = left) */
+    float wheel_load[4];    /* N: front left, front right, rear left, rear right */
+    /* Blue flag: a car that is lapping us is close behind. Let it by; holding
+     * it up for more than RR_BLUE_FLAG_LIMIT seconds costs a time penalty. */
+    int blue_flag;          /* 1 while shown */
+    int blue_flag_car;      /* index of the car to let by, -1 if none */
+    float blue_flag_ds;     /* its track distance from us, m (negative = behind) */
+    int penalties;          /* time penalties so far */
+    float penalty_time;     /* s, added to the race time */
 } RRSensors;
+
+#define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */
+#define RR_BLUE_FLAG_LIMIT 8.0f    /* s of holding a lapping car up before a penalty */
+#define RR_BLUE_FLAG_PENALTY 5.0f  /* s added to the race time */
 
 typedef struct RRControl {
     float steer;      /* -1 (full right) .. +1 (full left) */

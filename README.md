@@ -70,7 +70,7 @@ ctest --test-dir build          # quick smoke races
 ```
 
 `--car` takes a robot name from `build/bots/` or a path to any robot library;
-`--params` and `--name` apply to the car before them. `--help` lists all
+`--params`, `--name`, `--spec` and `--dev` apply to the car before them. `--help` lists all
 options (noise on the range finders, physics step, robot rate, time limit,
 `--fuel-rate` and `--wear-rate` multipliers).
 
@@ -87,7 +87,7 @@ The engine sound is synthesised from each car's revs and throttle (a V10 with
 overrun pops and a rev limiter), for the cars nearest the camera. `M` mutes it;
 `rr_viewer --sound-test out.wav --at 20` writes 25 s of it to a file.
 
-Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `L` goes back
+Click a car in the timing tower to watch it. Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `L` goes back
 to following the leader (the default), `C` / `Shift+C` cycle the cameras and
 `F2`-`F8` pick one: follow, cinematic (eases between framings around the car),
 TV, helicopter, top down, orbit, overview. The mouse wheel zooms the orbit,
@@ -98,6 +98,45 @@ the menu, `H` hides the HUD, `F1` help.
 
 To grab a frame without a window manager (e.g. under `xvfb-run`):
 `rr_viewer --screenshot shot.png --at 30 --camera 1`.
+
+## Car physics
+
+A planar car with per-wheel loads: weight and downforce per axle, longitudinal
+load transfer between the axles and lateral transfer between left and right,
+split by the roll stiffness (56% front), lagging the accelerations like a
+sprung car. Each wheel has its own load-sensitive tyre (a magic-formula curve
+peaking around 6° of slip) and friction circle, so a lightly loaded inside
+rear spins first and the limited-slip diff hands some of its drive to the
+outside wheel. Downforce has a balance that moves forward under braking and
+fades when the car slides sideways. Robots see `grip_use` and `slip_angle`
+per axle, so under- and oversteer show up in telemetry
+(`--telemetry DIR` writes them per car).
+
+## Blue flags
+
+A car about to be lapped gets a blue flag when the lapping car is within 60 m
+(or 1.2 s) behind. Holding it up within 30 m for more than 8 s costs a 5 s
+time penalty, added to the race time. The timing tower shows blue-flagged
+cars in blue and the car panel says who to let by.
+
+## Car specs and development
+
+Car numbers are data: `specs/f1_2006.json` lists every physics parameter of
+the built-in car (any field left out keeps the default), and
+`--spec FILE|NAME` gives a car another spec. `specs/development.json` defines
+development categories (top speed, downforce, handling, engine, tyre
+management, fuel efficiency, pit crew), what one token in each changes, the
+token budget (10) and the per-category range (-3 to 5; negative tokens trade a
+category down to pay for others). `--dev "top_speed=4,downforce=-2,pit_crew=3"`
+develops one car; over-budget or unknown categories are errors. The car's
+spec reaches its robot through `RRCarSpec`, so planners adapt to it. This is
+the base for championships with asymmetric cars; the menu does not expose it
+yet.
+
+```sh
+./build/rr_race --laps 10 --car racingline --dev "top_speed=5,downforce=-3" \
+                          --car racingline --dev "downforce=5,top_speed=-3"
+```
 
 ## Writing a robot
 
@@ -129,11 +168,12 @@ p 400 120 16     # wider here
 
 ```
 include/rr/robot_api.h   robot ABI (C)
-src/core/                track, car physics, race, robot loader, CLI
+src/core/                track, car physics, race, robot loader, CLI, car specs
 apps/headless/           rr_race
 apps/viewer/             rr_viewer (renderer, HUD)
 bots/                    example robots and shared helpers
 tracks/                  circuit.trk, oval.trk
+specs/                   car specs and development rules (JSON)
 assets/fonts/            DejaVu fonts for the HUD (see DEJAVU_LICENSE.txt)
 assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see its README)
 ```
@@ -141,8 +181,7 @@ assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see it
 ## Current limits and next steps
 
 - Flat tracks only (no elevation or banking), one car model.
-- Racecraft is basic: overtaking between closely matched cars is rare and the
-  first lap is often messy. `gapfollow` and `simple` never pit, so in long
+- Racecraft is basic: overtaking between closely matched cars is rare. `gapfollow` and `simple` never pit, so in long
   races they run out of fuel or tyres.
 - Possible next steps: more tracks and a track editor, per-team car setups,
   batch tournaments and parameter sweeps with a summary report, a Python
