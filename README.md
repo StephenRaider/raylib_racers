@@ -27,7 +27,8 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   debug values to telemetry and draw a path in the viewer.
 - **Three example robots** (`bots/`): `simple` (C, sensors only), `gapfollow`
   (C++, sensors only) and `racingline` (C++, plans a minimum-curvature line and
-  speed profile, runs a pit strategy, overtakes and defends).
+  speed profile, plans its own pit strategy from the timing screen, overtakes
+  and defends).
 - **`rr_race`**: headless runner with JSON results and per-car CSV telemetry.
   A 5-car, 3-lap race on the 3.2 km circuit takes about one second.
 - **`rr_viewer`**: raylib 3D viewer with low-poly F1 cars in team liveries
@@ -71,16 +72,23 @@ ctest --test-dir build          # quick smoke races
 ```
 
 `--car` takes a robot name from `build/bots/` or a path to any robot library;
-`--params`, `--name`, `--spec` and `--dev` apply to the car before them. `--help` lists all
-options (noise on the range finders, physics step, robot rate, time limit,
-`--fuel-rate` and `--wear-rate` multipliers, `--cool-down` to run on until the
-cars have parked after the flag).
+`--params`, `--name`, `--spec`, `--dev` and `--tires soft|medium|hard` (the
+team's choice of starting tyres, overriding the robot's) apply to the car before
+them. `--help` lists all options (noise on the range finders, physics step,
+robot rate, time limit, `--fuel-rate` and `--wear-rate` multipliers,
+`--ambient` temperature, `--two-compounds on|off|auto`, `--cool-down` to run on
+until the cars have parked after the flag).
+
+**Two-compound rule.** By default a race longer than 20 laps requires every car
+to use two different compounds; a car that finishes without doing so gets 30 s
+added. `--two-compounds on|off` forces it either way.
 
 The viewer opens on a **race setup** menu: track, race length, tyre life
 (in laps of the chosen track; the menu measures a lap first), number of cars
-(up to 20: ten teams of two, each with its own number), the session and a
-**Grid** page where each car gets a livery and a driving algorithm (any robot
-library in `bots/` shows up there). **Weekend** mode runs qualifying first:
+(up to 20: ten teams of two, each with its own number), the session, the tyre
+rule and a **Grid** page where each car gets a livery, a driving algorithm (any
+robot library in `bots/` shows up there) and its starting tyres (Auto lets the
+algorithm choose). **Weekend** mode runs qualifying first:
 each car goes out alone for an out lap and two flying laps, and the fastest
 lap takes pole. `Enter` skips the current run, `Shift+Enter` the rest of
 qualifying. `--no-menu` skips the menu. The default grid runs the four
@@ -131,11 +139,16 @@ front, while the slipstream (up to 60 m back) cuts its drag. The car panel in
 the viewer shows each axle's tyre temperature: blue cold, green in the
 window, amber and red hot.
 
+The timing tower shows each car's compound, its age in laps and its number of
+stops. When the focused car's algorithm publishes its plan, the car panel shows
+the window of its next stop and the tyres it will fit, and warns when the
+two-compound rule still wants a second compound.
+
 ## Blue flags
 
 A car about to be lapped gets a blue flag when the lapping car is within 60 m
 (or 1.2 s) behind. Holding it up within 30 m for more than 8 s costs a 5 s
-time penalty, added to the race time. The timing tower shows blue-flagged
+time penalty (once per lapping car), added to the race time. The timing tower shows blue-flagged
 cars in blue and the car panel says who to let by.
 
 ## Car specs and development

@@ -68,20 +68,32 @@ static inline float rr_follow_speed(const RRSensors* in, float myLat, float lane
 /* --------------------------------------------------------------- blue flag */
 
 /* Under a blue flag: give the lapping car room. Picks the side away from it
- * (keeping to the side we are on if it is still far back), writes the lateral
+ * (keeping to the side we are on if it is right behind us), writes the lateral
  * to drive to into *targetLat and returns a speed factor (< 1 once it is close).
- * Returns 1 and leaves *targetLat alone without a blue flag. */
-static inline float rr_blue_flag(const RRSensors* in, float myLat, float halfWidth, float* targetLat) {
-    if (!in->blue_flag) return 1.0f;
-    const RROpponent* o = 0;
-    for (int k = 0; k < in->num_nearby; ++k)
-        if (in->nearby[k].car_index == in->blue_flag_car) o = &in->nearby[k];
-    float side;
-    if (o && fabsf(o->lateral - myLat) > 0.8f) side = o->lateral > myLat ? -1.0f : 1.0f;
-    else side = myLat >= 0 ? 1.0f : -1.0f;
-    *targetLat = side * halfWidth * 0.62f;
+ * *side (start at 0) remembers the side chosen until the flag goes, so the car
+ * does not weave in front of the lapping car; pass NULL to choose afresh each
+ * call. Returns 1 and leaves *targetLat alone without a blue flag. */
+static inline float rr_blue_flag_side(const RRSensors* in, float myLat, float halfWidth, float* side, float* targetLat) {
+    if (!in->blue_flag) {
+        if (side) *side = 0;
+        return 1.0f;
+    }
+    float s = side ? *side : 0;
+    if (s == 0) {
+        const RROpponent* o = 0;
+        for (int k = 0; k < in->num_nearby; ++k)
+            if (in->nearby[k].car_index == in->blue_flag_car) o = &in->nearby[k];
+        if (o && fabsf(o->lateral - myLat) > 0.8f) s = o->lateral > myLat ? -1.0f : 1.0f;
+        else s = myLat >= 0 ? 1.0f : -1.0f;
+        if (side) *side = s;
+    }
+    *targetLat = s * halfWidth * 0.7f;
     float ds = -in->blue_flag_ds; /* how far back it is */
     return ds < 30.0f ? 0.9f : 0.97f;
+}
+
+static inline float rr_blue_flag(const RRSensors* in, float myLat, float halfWidth, float* targetLat) {
+    return rr_blue_flag_side(in, myLat, halfWidth, 0, targetLat);
 }
 
 /* --------------------------------------------------------------- grip */

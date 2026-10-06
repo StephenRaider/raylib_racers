@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "rr/robot_api.h"
 
 #include <filesystem>
 #include <stdexcept>
@@ -24,6 +25,7 @@ std::string usage(const char* prog, bool viewer) {
         "  --name STR             display name for the last --car\n"
         "  --spec NAME|FILE       car spec for the last --car (specs/*.json; default: the built-in F1 car)\n"
         "  --dev STR              development tokens for the last --car, e.g. \"top_speed=3,handling=-1\"\n"
+        "  --tires soft|medium|hard  starting tyres for the last --car (default: the robot decides)\n"
         "  --dev-rules NAME|FILE  development rules (default specs/development.json)\n"
         "  --seed N               random seed (sensor noise)\n"
         "  --noise X              range-finder noise, relative std-dev (default 0)\n"
@@ -33,6 +35,7 @@ std::string usage(const char* prog, bool viewer) {
         "  --fuel-rate X          fuel consumption multiplier (default 1)\n"
         "  --wear-rate X          tyre wear multiplier (default 1; raise it to force stops in short races)\n"
         "  --ambient C            air and track temperature (default 25): hotter days overheat the tyres\n"
+        "  --two-compounds on|off|auto  every car must use two compounds (auto: races over 20 laps)\n"
         "Output\n"
         "  --json FILE            write results as JSON\n"
         "  --telemetry DIR        write one CSV per car at the robot rate\n"
@@ -67,7 +70,20 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             if (a == "-h" || a == "--help") { wantHelp = true; return true; }
             else if (a == "--track") cfg.track = need(i, a);
             else if (a == "--laps") cfg.laps = std::stoi(need(i, a));
-            else if (a == "--car") cfg.entries.push_back({need(i, a), "", ""});
+            else if (a == "--car") { cfg.entries.emplace_back(); cfg.entries.back().robot = need(i, a); }
+            else if (a == "--tires") {
+                std::string v = need(i, a);
+                if (cfg.entries.empty()) throw std::runtime_error(a + " must follow a --car");
+                int t = v == "soft" || v == "1" ? RR_TIRE_SOFT : v == "medium" || v == "2" ? RR_TIRE_MEDIUM
+                        : v == "hard" || v == "3" ? RR_TIRE_HARD : 0;
+                if (!t) throw std::runtime_error("--tires takes soft, medium or hard");
+                cfg.entries.back().tires = t;
+            }
+            else if (a == "--two-compounds") {
+                std::string v = need(i, a);
+                cfg.twoCompounds = v == "on" ? 1 : v == "off" ? 0 : v == "auto" ? -1 : -2;
+                if (cfg.twoCompounds == -2) throw std::runtime_error("--two-compounds takes on, off or auto");
+            }
             else if (a == "--params" || a == "--name" || a == "--spec" || a == "--dev") {
                 const char* v = need(i, a);
                 if (cfg.entries.empty()) throw std::runtime_error(a + " must follow a --car");

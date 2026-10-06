@@ -5,9 +5,13 @@
 // On top of that it races:
 //   - the speed profile is re-planned every lap for the current fuel load and
 //     tyre grip;
-//   - pit strategy: it measures fuel use and tyre wear per metre, stops when the
-//     fuel will not last or the tyres would pass the wear limit, and picks the
-//     fuel load and the softest compound that reaches the flag;
+//   - strategy (strategist.hpp): it measures its own fuel use, tyre wear, lap
+//     time and pit loss, and re-plans every lap how many stops to make, when,
+//     on which compounds and with how much fuel. Within the planned window it
+//     reads the timing screen: it pits early to undercut the car ahead or to
+//     cover a rival behind that has just stopped, stays out to overcut a car
+//     ahead that has just pitted, and waits a lap when it would rejoin right
+//     behind another car;
 //   - overtaking: picks the side with more room around the car ahead and does
 //     not run into the back of it;
 //   - defending: when a car close behind is closing, covers the inside of the
@@ -29,8 +33,9 @@
 //   pass=<1>       0 disables overtaking moves
 //   defend=<1>     0 disables defending
 //   wear=<0.7>     tyre wear at which to stop for new tyres
-//   fuel=<full>    litres at the start
-//   tires=<2>      starting compound: 1 soft, 2 medium, 3 hard
+//   fuel=<auto>    litres at the start (default: what the planned first stint needs)
+//   tires=<auto>   starting compound: 1 soft, 2 medium, 3 hard (default: the strategist picks;
+//                  a team choice in the menu or --tires overrides both)
 //   pit=<1>        0 never stops
 //   push=<1.2>     how far above `grip` the learnt limit may go (1 = never)
 //   learn=<1>      0 disables learning the limit
@@ -40,12 +45,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include "../common/rr_awareness.h"
 #include "../common/rr_params.h"
 #include "../common/rr_recovery.h"
 #include "rr/robot_api.h"
+#include "strategist.hpp"
 
 namespace {
 
@@ -53,7 +61,6 @@ struct P2 { float x, y; };
 
 enum Mode { RACE, PIT_IN, PIT_OUT };
 
-float compoundWear(int c) { return c == RR_TIRE_SOFT ? 2.0f : (c == RR_TIRE_HARD ? 0.55f : 1.0f); }
 float smooth01(float u) { u = std::clamp(u, 0.0f, 1.0f); return u * u * (3 - 2 * u); }
 
 struct RacingLine {
@@ -97,6 +104,7 @@ struct RacingLine {
     int passCar = -1;            // car we are passing
     float passSide = 0;          // side we pass on
     float defendSide = 0;        // side we are covering, 0 = not defending
+    float blueSide = 0;          // side we keep to while being lapped
     double defendUntil = 0, defendCooldown = 0;
     float tc = 1;                // traction-control throttle limit
     RRRecovery recovery{};
@@ -104,9 +112,20 @@ struct RacingLine {
     // strategy
     Mode mode = RACE;
     bool decidedThisLap = false;
+    strat::Model model;
+    strat::Plan planNow;
+    int planLap = 0;                      // lap the plan was made on
+    float lapRefN = 0;                    // clean laps averaged into model.lapRef
+    double entryTime = -1;                // when we last passed the pit entry
+    bool entryPitting = false;
+    float spanNormal = 0;                 // s from pit entry to pit exit when not stopping
+    float lastService = 0;                // s, the service of the stop under way
+    int prevStops[RR_MAX_CARS] = {};      // rivals' stop counts at our last decision
+    bool cleanLap = true;                 // no pit, recovery or start on this lap
     float fuelRef = 0, fuelDistRef = 0;   // since the last refuel
     float wearRef = 0, wearDistRef = 0;   // since the last tyre change
     int stopsSeen = 0;
+    int index = 0;                        // our car index
     RRControl order{};                    // what we ask the crew for
     char plan[48] = "";
 
@@ -222,8 +241,11 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
     r.plannedGrip = tyreGrip;
 }
 
-void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* params, RRRobotConfig* cfg) {
+void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg);
+
+void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const char* params, RRRobotConfig* cfg) {
     auto* r = new RacingLine();
+    r->index = index;
     r->grip = rr_param(params, "grip", 0.8f);
     r->brakeScale = rr_param(params, "brake", 0.7f);
     r->margin = rr_param(params, "margin", 1.3f);
@@ -237,8 +259,6 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* pa
     r->learn = rr_param(params, "learn", 1.0f) != 0.0f;
     r->attack = std::clamp(rr_param(params, "attack", 1.0f), 0.5f, 2.0f);
     r->heat = rr_param(params, "heat", 5.0f);
-    cfg->initial_fuel = rr_param(params, "fuel", car->fuel_capacity);
-    cfg->tire_compound = (int)rr_param(params, "tires", (float)RR_TIRE_MEDIUM);
     r->car = *car;
     r->pit = track->pit;
     r->tp.assign(track->points, track->points + track->num_points);
@@ -246,13 +266,96 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* pa
     r->ds = track->length / track->num_points;
     r->adj.assign((size_t)std::ceil(r->L / RacingLine::kBin), 1.0f);
     planLine(*r);
+    planSpeed(*r, car->mass + 0.5f * car->fuel_capacity * car->fuel_density, 1.0f);
+    initStrategy(*r, params, cfg);
     planSpeed(*r, car->mass + cfg->initial_fuel * car->fuel_density, 1.0f);
     return r;
 }
 
 // ---------------------------------------------------------------- strategy
 
-// Decide, once per lap shortly before the pit entry, whether to stop and what for.
+// Time along the planned line from track distance a to b, s.
+float lineTime(const RacingLine& r, float a, float b) {
+    float t = 0;
+    const int n0 = (int)(a / r.ds), steps = (int)(r.fwd(a, b) / r.ds);
+    for (int k = 0; k < steps; ++k) t += r.ds / std::max(5.0f, r.speed[r.wrap(n0 + k)]);
+    return t;
+}
+
+// Priors before the car has measured itself, the starting tyres and the
+// starting fuel (enough for the planned first stint).
+void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
+    strat::Model& m = r.model;
+    const float wearRate = cfg->wear_rate > 0 ? cfg->wear_rate : 1.0f;
+    const float fuelRate = cfg->fuel_rate > 0 ? cfg->fuel_rate : 1.0f;
+    m.lapRef = lineTime(r, 0, r.L - r.ds) * 1.03f;
+    m.fuelPerLap = 0.72e-3f * r.L * r.car.fuel_use_scale * fuelRate;  // ~0.72 l per km
+    m.wearPerLapMed = 0.019f * r.car.tire_wear_scale * wearRate * (1 + 0.025f * std::max(0.0f, r.heat - 5));
+    m.wearLimit = r.wearLimit;
+    m.serviceScale = r.car.pit_service_scale > 0 ? r.car.pit_service_scale : 1.0f;
+    m.fuelCap = r.car.fuel_capacity;
+    m.fuelDensity = r.car.fuel_density;
+    // Pit loss: the lane at the limit and the slower entry and exit, against
+    // the line, plus stopping in and leaving the box.
+    if (r.usePit) {
+        const RRPitInfo& p = r.pit;
+        float pitT = r.fwd(p.lane_start_s, p.lane_end_s) / p.speed_limit;
+        pitT += (r.fwd(p.entry_s, p.lane_start_s) + r.fwd(p.lane_end_s, p.exit_s)) / (1.6f * p.speed_limit);
+        r.spanNormal = lineTime(r, p.entry_s, p.exit_s);
+        m.pitLoss = std::max(5.0f, pitT - r.spanNormal) + 4.0f;
+    }
+    const int laps = cfg->race_laps > 0 ? cfg->race_laps : 10;
+    const int tires = (int)rr_param(params, "tires", 0.0f);
+    int start = tires >= RR_TIRE_SOFT && tires <= RR_TIRE_HARD ? tires : 0;
+    if (cfg->starting_compound_set) start = cfg->tire_compound;  // the team's choice: plan around it
+    strat::Plan best;
+    for (int c = RR_TIRE_SOFT; c <= RR_TIRE_HARD; ++c) {
+        if (start && c != start) continue;
+        strat::Plan pl = r.usePit ? strat::plan(m, laps - 1, c, 0, m.fuelCap, 1.0f, 1 << c, cfg->two_compound_rule)
+                                  : strat::Plan{};
+        if (!r.usePit) { pl.valid = true; pl.cost = 0; pl.firstStint = laps - 1; }
+        if (pl.valid && (!best.valid || pl.cost < best.cost)) { best = pl; cfg->tire_compound = c; }
+    }
+    if (start) cfg->tire_compound = start;
+    // Fuel: the first stint (the start lap plus firstStint laps) and a lap spare.
+    const float need = (best.valid ? best.firstStint + 2.0f : (float)laps + 1.0f) * m.fuelPerLap * 1.04f;
+    cfg->initial_fuel = std::min(r.car.fuel_capacity, rr_param(params, "fuel", need));
+    if (!r.usePit) cfg->initial_fuel = rr_param(params, "fuel", r.car.fuel_capacity);
+}
+
+// What the timing screen says about the cars around us, in seconds.
+struct Traffic {
+    float ahead = 1e9f, behind = -1e9f;  // gap to the nearest car ahead / behind (behind is negative)
+    int aheadIdx = -1, behindIdx = -1;
+    bool aheadPitted = false;            // ...and whether it stopped since our last look
+    bool behindPitted = false;
+};
+
+Traffic readTiming(const RacingLine& r, const RRSensors* in) {
+    Traffic t;
+    for (int k = 0; k < in->num_timing; ++k) {
+        const RRTimingEntry& e = in->timing[k];
+        if (e.dnf || e.finished || e.gap == 0.0f) continue;
+        const bool stopped = e.car_index < RR_MAX_CARS && e.pit_stops > r.prevStops[e.car_index];
+        if (e.gap > 0 && e.gap < t.ahead) { t.ahead = e.gap; t.aheadIdx = e.car_index; t.aheadPitted = stopped || e.pit_state != RR_PIT_NONE; }
+        if (e.gap < 0 && e.gap > t.behind) { t.behind = e.gap; t.behindIdx = e.car_index; t.behindPitted = stopped || e.pit_state != RR_PIT_NONE; }
+    }
+    return t;
+}
+
+// Would we come out of a stop costing `loss` seconds right behind someone?
+bool rejoinBlocked(const RRSensors* in, float loss) {
+    for (int k = 0; k < in->num_timing; ++k) {
+        const RRTimingEntry& e = in->timing[k];
+        if (e.dnf || e.finished || e.gap == 0.0f || e.pit_state != RR_PIT_NONE) continue;
+        const float after = e.gap + loss;  // their gap to us once we have stopped
+        if (after > 0.0f && after < 1.5f) return true;
+    }
+    return false;
+}
+
+// Once a lap, shortly before the pit entry: update what the car knows about
+// itself, re-plan the race and decide whether to stop now.
 void strategy(RacingLine& r, const RRSensors* in) {
     if (!r.usePit || r.mode != RACE) return;
     const float s = in->dist_from_start;
@@ -263,51 +366,128 @@ void strategy(RacingLine& r, const RRSensors* in) {
     }
     if (r.decidedThisLap) return;
     r.decidedThisLap = true;
+    strat::Model& m = r.model;
 
-    // Rates measured since the last refuel / tyre change; until there is most
-    // of a lap's worth of data there is nothing to decide on.
+    // Measured rates since the last refuel / tyre change replace the priors
+    // once there is most of a lap of data.
     const float fuelDist = in->dist_raced - r.fuelDistRef, wearDist = in->dist_raced - r.wearDistRef;
-    if (fuelDist < r.L * 0.8f || wearDist < r.L * 0.8f) return;
-    const float fuelPerM = std::max(0.0f, r.fuelRef - in->fuel) / fuelDist;
     const float wearNow = std::max(in->tire_wear[0], in->tire_wear[1]);
-    const float wearPerM = std::max(0.0f, wearNow - r.wearRef) / wearDist;
+    if (fuelDist > r.L * 0.8f) m.fuelPerLap = std::max(0.1f, r.fuelRef - in->fuel) / fuelDist * r.L;
+    if (wearDist > r.L * 0.8f)
+        m.wearPerLapMed = std::max(0.002f, wearNow - r.wearRef) / wearDist * r.L / strat::compoundWear(in->tire_compound) /
+                          (1 + m.wearGrowth * 0.5f * (wearNow + r.wearRef));
+    const float fuelPerM = m.fuelPerLap / r.L, wearPerM = m.wearRate(in->tire_compound, wearNow) / r.L;
 
     // Distance from the pit entry to the flag.
     const float atEntry = in->dist_raced + toEntry;
     const float toGo = in->race_laps * r.L - atEntry;
-    if (toGo < 0.3f * r.L) return;
+    const int lapsLeft = in->race_laps - in->lap;  // complete laps after this one
     const float fuelAtEntry = in->fuel - fuelPerM * toEntry;
     const float wearAtEntry = wearNow + wearPerM * toEntry;
+    const float lapFrac = std::clamp(toEntry / r.L, 0.0f, 1.0f);
 
-    const float reserve = 0.5f;  // litres
+    // Things that force a stop whatever the plan says.
+    const float reserve = 0.1f * m.fuelPerLap;  // litres at the flag, as the plan assumes
     const bool fuelShort = fuelAtEntry - fuelPerM * toGo < reserve &&                    // won't make the flag
                            fuelAtEntry - fuelPerM * r.L < reserve + fuelPerM * 400.0f;  // nor the next pit entry
-    const bool tyresGone = wearAtEntry + wearPerM * r.L > r.wearLimit && wearPerM * toGo > 0.05f;
-    // Heavy damage (a quarter of the downforce gone) is worth a stop to repair.
+    const bool tyresGone = wearAtEntry + wearPerM * r.L > m.wearLimit + strat::kWearMargin && wearPerM * toGo > 0.05f;
     const bool broken = in->damage > 5000.0f && toGo > 3.0f * r.L;
-    if (!fuelShort && !tyresGone && !broken) return;
+    const bool must = toGo > 0.3f * r.L && (fuelShort || tyresGone || broken);
 
+    // The plan.
+    strat::Plan pl = lapsLeft > 0 ? strat::plan(m, lapsLeft, in->tire_compound, wearAtEntry, fuelAtEntry, lapFrac,
+                                                in->compounds_used, in->two_compound_rule != 0)
+                                  : strat::Plan{};
+    r.planNow = pl;
+    r.planLap = in->lap;
+    if (std::getenv("RL_DEBUG"))
+        std::fprintf(stderr, "car %d t=%.0f lap %d left %d: ref %.2f fuel/lap %.2f wear/lap(med) %.4f loss %.1f | stops %d first +%d [%d..%d] %d/%d/%d laps %d/%d/%d fuel %.1f cost %.1f\n",
+                     r.index, in->time, in->lap, lapsLeft, m.lapRef, m.fuelPerLap, m.wearPerLapMed, m.pitLoss, pl.stops, pl.firstStint,
+                     pl.windowLo, pl.windowHi, pl.compounds[0], pl.compounds[1], pl.compounds[2], pl.stintLaps[0],
+                     pl.stintLaps[1], pl.stintLaps[2], pl.nextFuel, pl.cost);
+
+    // Racecraft around the plan, inside its window.
+    const Traffic tr = readTiming(r, in);
+    const float stopLoss = m.pitLoss + m.serviceTime(pl.valid ? pl.nextFuel : 10.0f, true);
+    const bool planned = pl.valid && pl.stops > 0 && pl.firstStint == 0;
+    bool now = must || planned;
+    const char* why = planned ? "plan" : fuelShort ? "fuel" : tyresGone ? "tyres" : "damage";
+    if (!must && pl.valid && pl.stops > 0 && pl.windowLo == 0 && pl.firstStint <= 3) {  // racecraft moves a stop by a few laps at most
+        const bool canWait = pl.windowHi > 0;
+        if (tr.behindPitted && tr.behind > -3.0f) { now = true; why = "cover"; }               // they undercut us: answer now
+        else if (tr.aheadPitted && tr.ahead < 2.5f && canWait && wearNow < 0.5f) { now = false; why = "overcut"; }
+        else if (tr.ahead < 1.5f && !tr.aheadPitted) { now = true; why = "undercut"; }         // fresh tyres beat the car ahead
+        if (now && canWait && rejoinBlocked(in, stopLoss) && std::strcmp(why, "cover") != 0) { now = false; why = "traffic"; }
+    }
+    for (int k = 0; k < in->num_timing; ++k)
+        if (in->timing[k].car_index < RR_MAX_CARS) r.prevStops[in->timing[k].car_index] = in->timing[k].pit_stops;
+    if (!now) return;
+
+    // Stopping earlier than planned: what to fit and how much fuel for a stop now.
+    if (pl.valid && pl.firstStint != 0)
+        pl = strat::plan(m, lapsLeft, in->tire_compound, wearAtEntry, fuelAtEntry, lapFrac, in->compounds_used,
+                         in->two_compound_rule != 0, true);
     RRControl o{};
     o.pit_request = 1;
-    // Fuel to the flag plus a little; the host clamps it to the tank (then another stop follows).
-    o.pit_fuel = std::max(0.0f, fuelPerM * toGo * 1.08f + reserve + 1.0f - fuelAtEntry);
-    // Tyres: change if they are past a third of their life or will not reach the
-    // flag; take the softest compound that lasts to the flag.
-    const float baseWear = wearPerM / compoundWear(in->tire_compound);  // per metre on mediums
-    if (tyresGone || wearAtEntry > 0.3f || wearAtEntry + wearPerM * toGo > r.wearLimit) {
-        o.pit_tires = RR_TIRE_HARD;
-        for (int c : {RR_TIRE_SOFT, RR_TIRE_MEDIUM})
-            if (baseWear * compoundWear(c) * toGo < r.wearLimit) { o.pit_tires = c; break; }
+    if (pl.valid && pl.stops > 0) {
+        o.pit_fuel = pl.nextFuel;
+        o.pit_tires = pl.compounds[0];
+    } else {
+        // Out of plans (a forced stop on the last laps): fuel to the flag, the softest tyres that last.
+        o.pit_fuel = std::max(0.0f, fuelPerM * toGo * 1.08f + reserve + 1.0f - fuelAtEntry);
+        // The softest tyres that last, a different compound if the rule still wants one.
+        const bool needOther = in->two_compound_rule && strat::popcount(in->compounds_used) < 2;
+        o.pit_tires = 0;
+        for (int c : {RR_TIRE_SOFT, RR_TIRE_MEDIUM, RR_TIRE_HARD}) {
+            if (needOther && (in->compounds_used & (1 << c))) continue;
+            if (m.wearRate(c, 0) * toGo / r.L < r.wearLimit || c == RR_TIRE_HARD) { o.pit_tires = c; break; }
+        }
+        if (!o.pit_tires) o.pit_tires = RR_TIRE_MEDIUM;
     }
     o.pit_repair = in->damage > 1500.0f;
     r.order = o;
     r.mode = PIT_IN;
-    std::snprintf(r.plan, sizeof r.plan, "box: %.0f l%s%s", o.pit_fuel,
+    r.lastService = m.serviceTime(o.pit_fuel, o.pit_tires != 0);
+    if (std::getenv("RL_DEBUG")) std::fprintf(stderr, "car %d BOX lap %d: %s\n", r.index, in->lap, why);
+    std::snprintf(r.plan, sizeof r.plan, "box (%s): %.0f l%s%s", why, o.pit_fuel,
                   o.pit_tires == RR_TIRE_SOFT     ? " +soft"
                   : o.pit_tires == RR_TIRE_MEDIUM ? " +medium"
                   : o.pit_tires == RR_TIRE_HARD   ? " +hard"
                                                   : "",
                   o.pit_repair ? " +repair" : "");
+}
+
+// Learns the reference lap and the real pit loss from the timing of each lap.
+void learnTiming(RacingLine& r, const RRSensors* in, bool newLap) {
+    if (!r.usePit) return;
+    strat::Model& m = r.model;
+    const RRPitInfo& p = r.pit;
+    const float s = in->dist_from_start;
+    // Crossing the pit entry and exit: time the span with and without a stop.
+    if (r.entryTime < 0 && r.fwd(p.entry_s, s) < 20.0f && in->dist_raced > 0) {
+        r.entryTime = in->time;
+        r.entryPitting = r.mode == PIT_IN;
+    } else if (r.entryTime >= 0 && r.fwd(p.exit_s, s) < 20.0f) {
+        const float span = (float)(in->time - r.entryTime);
+        if (!r.entryPitting && span < r.spanNormal * 1.15f) r.spanNormal += (span - r.spanNormal) * 0.3f;
+        else if (r.entryPitting && in->pit_stops > 0) {
+            const float loss = span - r.spanNormal - r.lastService;
+            if (loss > 3.0f && loss < 60.0f) m.pitLoss += (loss - m.pitLoss) * 0.5f;
+        }
+        r.entryTime = -1;
+    } else if (r.entryTime >= 0 && in->time - r.entryTime > 200.0) {
+        r.entryTime = -1;
+    }
+    if (newLap) {
+        // A clean racing lap updates the reference (taken back to mediums).
+        if (r.cleanLap && in->lap > 2 && in->last_lap_time > 0 && in->last_lap_time < in->best_lap_time * 1.04f) {
+            const float ref = in->last_lap_time / (1 + strat::compoundPace(in->tire_compound));
+            r.lapRefN += 1;
+            m.lapRef += (ref - m.lapRef) / std::min(r.lapRefN, 5.0f);
+        }
+        r.cleanLap = true;
+    }
+    if (r.mode != RACE || in->pit_state != RR_PIT_NONE) r.cleanLap = false;
 }
 
 // Lateral offset (from the centreline) of the pit path at track sample i.
@@ -411,7 +591,7 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
     // Overtaking: go round the nearest car ahead on the side with more room.
     // The side is held once alongside, and re-chosen while still behind (the
     // car ahead may move to defend).
-    if (r.pass) {
+    if (r.pass && !in->blue_flag) {  // no attacking while being lapped
         const RROpponent* a = carAhead(in, (8.0f + 0.15f * v) * r.attack);
         if (a && (v > a->speed + 0.5f || a->ds < 12.0f)) {
             float roomLeft = hw - a->lateral, roomRight = hw + a->lateral;
@@ -472,12 +652,21 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
         }
     }
 
-    // Blue flag: a car is lapping us. Move aside and lift a little.
+    // Blue flag: a car is lapping us. Keep to one side and lift a little.
     if (in->blue_flag) {
         float aside = target;
-        *speedCap = std::min(*speedCap, r.speed[idx] * rr_blue_flag(in, myLat, hw, &aside));
+        rr_blue_flag_side(in, myLat, hw, &r.blueSide, &aside);
+        // Lift on the next straight once it is close: corners stay racing
+        // speed, so a train of backmarkers does not hold the leaders up.
+        float vMin = 1e9f;
+        for (int k = 0; k < (int)(150.0f / r.ds); k += 5) vMin = std::min(vMin, r.speed[r.wrap(idx + k)]);
+        if (-in->blue_flag_ds < 30.0f && vMin > 45.0f) *speedCap = std::min(*speedCap, std::max(30.0f, v - 6.0f));
+        r.passCar = -1;
+        r.passSide = 0;
         target = aside;
         r.defendSide = 0;
+    } else {
+        r.blueSide = 0;
     }
 
     // Never squeeze a car that is alongside, or move across one closing from behind.
@@ -580,8 +769,17 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         return;
     }
     learnLimit(*r, in, idx, r->mode != RACE || r->passCar >= 0 || r->defendSide != 0 || std::fabs(r->passOffset) > 0.5f);
-    if (in->pit_state == RR_PIT_NONE && r->mode == RACE && rr_recover(&r->recovery, in, out, r->car.max_steer)) {
+    // Stuck or turned round (outside the pit lane, also on the way in or out):
+    // get going again; a stop we were heading for is given up and re-planned.
+    if (in->pit_state == RR_PIT_NONE && rr_recover(&r->recovery, in, out, r->car.max_steer)) {
         r->binLost = true;
+        if (r->mode != RACE) {
+            if (std::getenv("RL_DEBUG")) std::fprintf(stderr, "car %d stop abandoned (recovering) lap %d\n", r->index, in->lap);
+            r->mode = RACE;
+            r->plan[0] = 0;
+            r->decidedThisLap = false;
+        }
+        r->cleanLap = false;
         std::snprintf(out->status, sizeof out->status, "recovering");
         return;
     }
@@ -594,6 +792,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         r->damage = dmg;
         planSpeed(*r, mass, in->tire_grip);
     }
+    learnTiming(*r, in, in->lap != r->plannedLap);
     if (in->lap != r->plannedLap) {
         r->plannedLap = in->lap;
         if (r->adjDirty || std::fabs(mass - r->plannedMass) > 3.0f || std::fabs(in->tire_grip - r->plannedGrip) > 0.003f) {
@@ -724,6 +923,12 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
                        : r->passCar >= 0    ? "passing"
                                             : "line";
     std::snprintf(out->status, sizeof out->status, "%s  %.0f km/h", what, vTarget * 3.6f);
+    // The plan, for the viewer: the window of the next stop and its tyres.
+    if (r->planNow.valid && r->planNow.stops > 0 && !pitting) {
+        out->pit_window[0] = r->planLap + r->planNow.windowLo;
+        out->pit_window[1] = r->planLap + r->planNow.windowHi;
+        out->pit_plan_tires = r->planNow.compounds[0];
+    }
     out->debug[0] = vTarget;
     out->debug[1] = r->offset[idx];
     out->debug[2] = r->passOffset;
@@ -731,6 +936,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     out->debug[4] = r->defendSide;
     out->debug[5] = std::max(-99.0f, r->sideLo);
     out->debug[6] = std::min(99.0f, r->sideHi);
+    out->debug[7] = std::min(999.0f, speedCap);
 }
 
 void destroy(void* self) { delete static_cast<RacingLine*>(self); }

@@ -31,9 +31,11 @@ void changeGrid(MenuState& m, int car, int col, int dir) {
     if (car < 0 || car >= (int)m.carLivery.size()) return;
     if (col == 0) {
         setLivery(m, car, m.carLivery[car] + dir);
-    } else {
+    } else if (col == 1) {
         const int n = (int)m.algos.size();
         m.carAlgo[car] = ((m.carAlgo[car] + dir) % n + n) % n;
+    } else if (car < (int)m.carTires.size()) {
+        m.carTires[car] = ((m.carTires[car] + dir) % 4 + 4) % 4;  // auto, soft, medium, hard
     }
 }
 
@@ -42,7 +44,7 @@ MenuAction updateGrid(MenuState& m, const std::vector<MenuHit>& hits) {
     auto rep = [](int key) { return IsKeyPressed(key) || IsKeyPressedRepeat(key); };
     if (rep(KEY_UP)) m.gridRow = (m.gridRow + n - 1) % n;
     if (rep(KEY_DOWN)) m.gridRow = (m.gridRow + 1) % n;
-    if (IsKeyPressed(KEY_TAB)) m.gridCol ^= 1;
+    if (IsKeyPressed(KEY_TAB)) m.gridCol = (m.gridCol + 1) % MenuState::kGridCols;
     if (rep(KEY_LEFT)) changeGrid(m, m.gridRow, m.gridCol, -1);
     if (rep(KEY_RIGHT)) changeGrid(m, m.gridRow, m.gridCol, 1);
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_BACKSPACE))
@@ -52,7 +54,7 @@ MenuAction updateGrid(MenuState& m, const std::vector<MenuHit>& hits) {
         for (const MenuHit& h : hits) {
             if (!CheckCollisionPointRec(mp, {h.x, h.y, h.w, h.h})) continue;
             if (h.row == 99) { m.gridPage = false; break; }  // Done button
-            const int car = (h.row - 100) / 2, col = (h.row - 100) % 2;
+            const int car = (h.row - 100) / MenuState::kGridCols, col = (h.row - 100) % MenuState::kGridCols;
             m.gridRow = car;
             m.gridCol = col;
             if (h.dir) changeGrid(m, car, col, h.dir);
@@ -76,6 +78,7 @@ void change(MenuState& m, int row, int dir, bool big, MenuAction& act) {
         case 2: m.tyreLife = std::clamp(m.tyreLife + dir, 0, MenuState::kNumTyreLives - 1); break;
         case 3: m.cars = std::clamp(m.cars + dir, 1, m.maxCars); break;
         case MenuState::kSessionRow: m.weekend = !m.weekend; break;
+        case MenuState::kRuleRow: m.tyreRule = (m.tyreRule + dir + 3) % 3; break;
         case MenuState::kGridRow: m.gridPage = true; break;
         default: break;
     }

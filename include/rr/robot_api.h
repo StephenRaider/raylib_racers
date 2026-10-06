@@ -29,9 +29,9 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 4
-/* Robots built for ABI 2 or 3 still load: versions 3 and 4 only appended
- * fields to RRCarSpec and RRSensors. */
+#define RR_ABI_VERSION 5
+/* Robots built for ABI 2 to 4 still load: later versions only appended
+ * fields to RRCarSpec, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
 #define RR_NUM_TRACK_SENSORS 19
@@ -40,6 +40,7 @@ extern "C" {
 #define RR_MAX_GEARS 8
 #define RR_NUM_DEBUG 8
 #define RR_MAX_NEARBY 8
+#define RR_MAX_CARS 32
 
 /* Tyre compounds: softer is grippier but wears faster and works cooler.
  *                    soft      medium    hard
@@ -53,6 +54,17 @@ extern "C" {
 #define RR_TIRE_SOFT 1
 #define RR_TIRE_MEDIUM 2
 #define RR_TIRE_HARD 3
+
+/* Pit service time: RR_PIT_SERVICE_BASE + max(fuel / RR_PIT_FUEL_RATE, RR_PIT_TIRE_CHANGE if
+ * changing tyres) + RR_PIT_REPAIR_PER_1000 per 1000 damage if repairing, all
+ * times the car's pit_service_scale. */
+#define RR_PIT_SERVICE_BASE 2.0f      /* s: jacked up and dropped */
+#define RR_PIT_FUEL_RATE 2.5f         /* l/s */
+#define RR_PIT_TIRE_CHANGE 3.5f       /* s, alongside refuelling */
+#define RR_PIT_REPAIR_PER_1000 1.0f   /* s per 1000 damage */
+/* Two-compound rule (RRSensors.two_compound_rule): a car that finishes the
+ * race without having used two different compounds gets this time penalty. */
+#define RR_TWO_COMPOUND_PENALTY 30.0f
 
 /* RRSensors.pit_state */
 #define RR_PIT_NONE 0        /* racing */
@@ -145,6 +157,24 @@ typedef struct RROpponent {
     int laps_ahead;      /* their completed laps minus ours */
 } RROpponent;
 
+/* One line of the timing screen: what a team sees about every car (no
+ * positions on track, no tyre wear: those are the car's own secrets). */
+typedef struct RRTimingEntry {
+    int car_index;
+    int race_pos;
+    int laps_done;
+    float gap_to_leader;  /* s at the same point of the track (-1 until timed) */
+    float gap;            /* s from us: + = ahead of us in the race, - = behind (laps included) */
+    float dist_raced;     /* m */
+    float last_lap, best_lap;  /* s, 0 until set */
+    int pit_state;        /* RR_PIT_* right now */
+    int pit_stops;
+    int tire_compound;    /* RR_TIRE_* fitted now */
+    int laps_on_tires;
+    int compounds_used;   /* bit (1 << RR_TIRE_*) for each compound used so far */
+    int finished, dnf;
+} RRTimingEntry;
+
 /* Optional setup a robot can change inside create(). The host fills defaults
  * before calling create(). */
 typedef struct RRRobotConfig {
@@ -155,7 +185,17 @@ typedef struct RRRobotConfig {
     float track_sensor_angles[RR_NUM_TRACK_SENSORS];
     int auto_gear;       /* 1 (default): the host shifts gears; 0: robot sets RRControl.gear */
     float initial_fuel;  /* litres at the start (default: full tank) */
-    int tire_compound;   /* starting tyres, RR_TIRE_* (default medium) */
+    int tire_compound;   /* starting tyres, RR_TIRE_* (default medium). When the team has chosen
+                            the starting tyres (starting_compound_set below), the host
+                            fills that choice in and ignores changes. */
+
+    /* --- ABI 5 --- race information for planning at create() (read only) */
+    int race_laps;
+    int two_compound_rule;  /* 1: two different compounds must be used in the race */
+    float fuel_rate;        /* race multiplier on fuel use (--fuel-rate, 1 = normal) */
+    float wear_rate;        /* race multiplier on tyre wear (--wear-rate, 1 = normal) */
+    float ambient_temp;     /* C */
+    int starting_compound_set;  /* 1: the team chose the starting tyres (already in tire_compound) */
 } RRRobotConfig;
 
 typedef struct RRSensors {
@@ -232,11 +272,20 @@ typedef struct RRSensors {
     float ambient_temp;        /* C */
     float slipstream;          /* drag reduction from a car ahead, 0..0.45 */
     float dirty_air;           /* downforce lost to a car ahead, 0..0.10 (the front loses more) */
+
+    /* --- ABI 5 --- */
+    /* The timing screen, in race order (timing[0] is the leader). Our own line
+     * is in there too (gap 0). */
+    int num_timing;
+    RRTimingEntry timing[RR_MAX_CARS];
+    int two_compound_rule;     /* 1: two different compounds must be used, or RR_TWO_COMPOUND_PENALTY */
+    int compounds_used;        /* bit (1 << RR_TIRE_*) for each compound we have used */
+    int starting_compound_set; /* 1: the team chose our starting tyres; RRRobotConfig.tire_compound is ignored */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */
 #define RR_BLUE_FLAG_LIMIT 8.0f    /* s of holding a lapping car up before a penalty */
-#define RR_BLUE_FLAG_PENALTY 5.0f  /* s added to the race time */
+#define RR_BLUE_FLAG_PENALTY 5.0f  /* s added to the race time, once per lapping car held up */
 
 typedef struct RRControl {
     float steer;      /* -1 (full right) .. +1 (full left) */
@@ -254,6 +303,10 @@ typedef struct RRControl {
     float pit_fuel;   /* litres to add (clamped to the tank) */
     int pit_tires;    /* 0 keep the tyres, or RR_TIRE_* to fit a new set */
     int pit_repair;   /* 1 to repair damage (adds time) */
+
+    /* --- ABI 5 --- optional, for the viewer: the strategy we are planning */
+    int pit_window[2];  /* laps of the next planned stop: earliest, latest (0 = no stop planned) */
+    int pit_plan_tires; /* compound planned for that stop (0 = none / undecided) */
 } RRControl;
 
 typedef struct RRRobotApi {
