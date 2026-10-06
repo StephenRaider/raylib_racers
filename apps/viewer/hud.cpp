@@ -12,6 +12,7 @@ namespace {
 const Color kText = {238, 240, 245, 255};
 const Color kDim = {160, 166, 180, 255};
 const Color kAccent = {255, 196, 40, 255};
+const Color kBlueFlag = {40, 110, 255, 255};
 
 std::string lapTime(double t) {
     if (t <= 0) return "-:--.---";
@@ -115,11 +116,22 @@ static const char* compoundName(int compound) {
     return compound == RR_TIRE_SOFT ? "SOFT" : compound == RR_TIRE_HARD ? "HARD" : "MEDIUM";
 }
 
+// Timing tower layout, shared by drawing and clicking.
+static const float kTowerX = 16, kTowerW = 340, kTowerRowH = 28, kTowerTop = 112;
+
+int Hud::towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const {
+    if (!st.showHud || st.qualifying) return -1;
+    if (p.x < kTowerX || p.x > kTowerX + kTowerW || p.y < kTowerTop - 3) return -1;
+    const int row = (int)((p.y - (kTowerTop - 3)) / kTowerRowH);
+    return row < (int)race.order().size() ? race.order()[row] : -1;
+}
+
 void Hud::drawTower(const rr::Race& race, const HudState& st) {
     const auto& cars = race.cars();
     const auto& order = race.order();
     const rr::Car& leader = cars[order[0]];
-    const float x = 16, w = 340, rowH = 28;
+    const float x = kTowerX, w = kTowerW, rowH = kTowerRowH;
+    const int hover = towerCarAt(race, st, GetMousePosition());
     float h = 104 + rowH * cars.size() + 8;
     panel({x, 16, w, h});
 
@@ -133,11 +145,13 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
     else std::snprintf(buf, sizeof buf, "x%g", st.timeScale);
     textRight(buf, x + w - 16, 50, 16, kDim, false, true);
 
-    float y = 112;
+    float y = kTowerTop;
     for (size_t p = 0; p < order.size(); ++p) {
         int idx = order[p];
         const rr::Car& c = cars[idx];
         if (idx == st.focus) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(WHITE, 0.12f));
+        else if (idx == hover) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(WHITE, 0.06f));
+        if (c.blueCar >= 0) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(kBlueFlag, 0.5f));
         std::snprintf(buf, sizeof buf, "%zu", p + 1);
         textRight(buf, x + 38, y, 19, kText, true);
         DrawRectangle((int)x + 46, (int)y + 1, 5, 19, teamColor(idx));
@@ -157,6 +171,10 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
             gap = buf;
         }
         if (c.finished && p > 0) gap = gap + " F";
+        if (c.penalties > 0 && !c.dnf) {
+            std::snprintf(buf, sizeof buf, "+%.0fs ", c.penaltyTime);
+            gap = buf + gap;
+        }
         Color gapCol = c.dnf ? Color{230, 90, 80, 255} : kDim;
         if (c.pitState != RR_PIT_NONE && !c.finished && !c.dnf) {
             gap = c.pitState == RR_PIT_SERVICE ? "IN BOX" : "PIT";
@@ -213,6 +231,20 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
     const float x = GetScreenWidth() - w - 16, y = GetScreenHeight() - h - 16;
     panel({x, y, w, h});
     char buf[128];
+
+    // flags above the panel: blue flag, penalties
+    float fy = y - 38;
+    if (c.blueCar >= 0) {
+        DrawRectangleRounded({x, fy, w, 30}, 0.3f, 6, kBlueFlag);
+        std::snprintf(buf, sizeof buf, "BLUE FLAG   let %s by", race.cars()[c.blueCar].name.c_str());
+        text(buf, x + 14, fy + 6, 17, WHITE, true);
+        fy -= 36;
+    }
+    if (c.penalties > 0) {
+        panel({x, fy, w, 30}, 0.8f);
+        std::snprintf(buf, sizeof buf, "PENALTY  +%.0f s  (%d)", c.penaltyTime, c.penalties);
+        text(buf, x + 14, fy + 6, 17, Color{240, 110, 70, 255}, true);
+    }
 
     DrawRectangle((int)x + 14, (int)y + 16, 5, 40, teamColor(st.focus));
     text(c.name.c_str(), x + 28, y + 12, 22, kText, true);
@@ -326,8 +358,9 @@ void Hud::drawHelp() {
 
 void Hud::drawResults(const rr::Race& race) {
     const auto& order = race.order();
-    float w = 560, h = 90 + 30.0f * order.size();
-    float x = (GetScreenWidth() - w) / 2, y = GetScreenHeight() * 0.22f;
+    const float rowH = order.size() > 14 ? 27.0f : 30.0f;
+    float w = 560, h = 90 + rowH * order.size();
+    float x = (GetScreenWidth() - w) / 2, y = std::max(10.0f, std::min(GetScreenHeight() * 0.22f, (GetScreenHeight() - h) / 2));
     panel({x, y, w, h}, 0.82f);
     text("RESULTS", x + 24, y + 18, 26, kAccent, true);
     textRight("R to restart", x + w - 24, y + 24, 15, kDim);
@@ -341,12 +374,16 @@ void Hud::drawResults(const rr::Race& race) {
         DrawRectangle((int)x + 60, (int)ry + 2, 5, 20, teamColor(order[p]));
         text(c.name.c_str(), x + 76, ry, 20, kText);
         std::string t;
-        if (c.finished) t = p == 0 ? lapTime(c.finishTime) : "+" + lapTime(c.finishTime - win.finishTime);
+        if (c.finished) t = p == 0 ? lapTime(c.raceTime()) : "+" + lapTime(c.raceTime() - win.raceTime());
         else t = c.dnf ? "DNF" : "not finished";
+        if (c.penalties > 0) {
+            std::snprintf(buf, sizeof buf, "pen +%.0fs", c.penaltyTime);
+            textRight(buf, x + w - 290, ry + 3, 14, Color{240, 110, 70, 255}, false, true);
+        }
         textRight(t.c_str(), x + w - 170, ry + 1, 18, kText, false, true);
         std::snprintf(buf, sizeof buf, "best %s", lapTime(c.bestLap).c_str());
         textRight(buf, x + w - 24, ry + 2, 15, kDim, false, true);
-        ry += 30;
+        ry += rowH;
     }
 }
 

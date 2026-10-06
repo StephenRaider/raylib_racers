@@ -9,6 +9,8 @@ struct EntrySpec {
     std::string robot;   // name in the bots directory, or a path to a shared library
     std::string params;  // passed verbatim to the robot's create()
     std::string name;    // display name (defaults to the robot's name)
+    std::string spec;    // car spec file or name in specs/ ("" = the built-in F1 car)
+    std::string dev;     // development tokens, e.g. "top_speed=3,handling=-1"
 };
 
 struct RaceConfig {
@@ -22,6 +24,7 @@ struct RaceConfig {
     float maxTime = 0;         // 0 = automatic
     float fuelRate = 1.0f;     // fuel consumption multiplier
     float wearRate = 1.0f;     // tyre wear multiplier
+    std::string devRules = "development";  // rules for --dev, file or name in specs/
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     std::string jsonOut;
     std::string telemetryDir;

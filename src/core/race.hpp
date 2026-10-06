@@ -62,6 +62,15 @@ struct Car {
     std::vector<int> pitLaps;   // lap on which each stop happened
     float noFuelTime = 0;
 
+    // blue flags and penalties
+    int blueCar = -1;           // car lapping us, close behind (-1 = no blue flag)
+    float blueDs = 0;
+    float blueHeld = 0;         // s spent holding that car up
+    int blueFlags = 0;          // times a blue flag was shown
+    int penalties = 0;
+    float penaltyTime = 0;      // s added to the race time
+    double raceTime() const { return finishTime + penaltyTime; }
+
     FILE* telemetry = nullptr;
 
     int currentLap(int raceLaps) const { return std::min(raceLaps, std::max(1, lapsDone + 1)); }
@@ -103,6 +112,7 @@ private:
     void updateOrder();
     void writeTelemetry(const Car& c);
     void updatePit(Car& c);
+    void updateBlueFlags();
     float slipstream(const Car& c) const;
     void finishService(Car& c);
     float wrapDs(float ds) const;

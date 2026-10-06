@@ -36,6 +36,10 @@ private:
         float rpm = 0, throttle = 0, gain = 0, pan = 0, pitch = 1, speed = 0, maxRpm = 19000;
         float lp1 = 0, lp2 = 0, noiseLp = 0, noiseHp = 0, windLp = 0;
         float pop = 0, limiter = 1, limiterClock = 0;
+        int firing = 0;                       // index of the last firing pulse (10 per cycle)
+        float pulse = 0, pulseGain = 1, rough = 1;  // firing-pulse excitation and per-pulse jitter
+        float fz1[3] = {}, fz2[3] = {};       // exhaust formant filters (state-variable)
+        float body = 0, body2 = 0, dcIn = 0, dcOut = 0;
         bool live = false;
     };
 

@@ -437,6 +437,10 @@ int main(int argc, char** argv) {
             for (int k = 0; k < 9 && k < n; ++k)
                 if (IsKeyPressed(KEY_ONE + k)) pick(race->order()[k]);
             if (IsKeyPressed(KEY_L)) st.followLeader = !st.followLeader;
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                const int car = hud->towerCarAt(*race, st, GetMousePosition());
+                if (car >= 0) pick(car);
+            }
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
             for (int k = 0; k < CAM_COUNT && k < 7; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;

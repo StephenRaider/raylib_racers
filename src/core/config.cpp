@@ -22,6 +22,9 @@ std::string usage(const char* prog, bool viewer) {
         "  --car ROBOT            add a car; ROBOT is a name in bots/ or a path to a robot library\n"
         "  --params STR           parameters for the last --car, e.g. \"speed=1.1,line=0.3\"\n"
         "  --name STR             display name for the last --car\n"
+        "  --spec NAME|FILE       car spec for the last --car (specs/*.json; default: the built-in F1 car)\n"
+        "  --dev STR              development tokens for the last --car, e.g. \"top_speed=3,handling=-1\"\n"
+        "  --dev-rules NAME|FILE  development rules (default specs/development.json)\n"
         "  --seed N               random seed (sensor noise)\n"
         "  --noise X              range-finder noise, relative std-dev (default 0)\n"
         "  --dt SECONDS           physics step (default 0.002)\n"
@@ -63,11 +66,13 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (a == "--track") cfg.track = need(i, a);
             else if (a == "--laps") cfg.laps = std::stoi(need(i, a));
             else if (a == "--car") cfg.entries.push_back({need(i, a), "", ""});
-            else if (a == "--params" || a == "--name") {
+            else if (a == "--params" || a == "--name" || a == "--spec" || a == "--dev") {
                 const char* v = need(i, a);
                 if (cfg.entries.empty()) throw std::runtime_error(a + " must follow a --car");
-                (a == "--params" ? cfg.entries.back().params : cfg.entries.back().name) = v;
+                auto& e = cfg.entries.back();
+                (a == "--params" ? e.params : a == "--name" ? e.name : a == "--spec" ? e.spec : e.dev) = v;
             }
+            else if (a == "--dev-rules") cfg.devRules = need(i, a);
             else if (a == "--seed") cfg.seed = std::stoull(need(i, a));
             else if (a == "--noise") cfg.sensorNoise = std::stof(need(i, a));
             else if (a == "--dt") cfg.dt = std::stof(need(i, a));

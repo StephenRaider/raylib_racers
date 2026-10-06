@@ -14,10 +14,41 @@ float CarParams::engineTorque(float rpm) const {
     for (int i = 1; i < n; ++i) {
         if (rpm <= pts[i][0]) {
             float f = (rpm - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
-            return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f;
+            return torqueScale * (pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f);
         }
     }
     return 0;
+}
+
+float CarParams::maxPower() const {
+    float best = 0;
+    for (float rpm = idleRpm; rpm <= maxRpm; rpm += 100) best = std::max(best, engineTorque(rpm) * rpm * (2 * kPi / 60.0f));
+    return best;
+}
+
+const CarParams::Field* CarParams::fields(int* count) {
+#define F(n) {#n, &CarParams::n}
+    static const Field f[] = {
+        F(mass), F(length), F(width), F(cgToFront), F(cgToRear), F(cgHeight), F(trackFront), F(trackRear),
+        F(rollStiffFront), F(suspensionLag), F(diffLock), F(yawInertia), F(maxSteer), F(steerRate), F(tireMu),
+        F(tireB), F(tireC), F(frontGrip), F(rearGrip), F(frontStiffness), F(loadSens), F(muLoadDrop),
+        F(dragCoeff), F(downforceCoeff), F(downforceFront), F(aeroPitchShift), F(aeroYawLoss),
+        F(rollingResist), F(wheelRadius), F(finalDrive), F(reverseRatio), F(idleRpm), F(maxRpm),
+        F(maxBrakeForce), F(brakeFront), F(engineBrake), F(drivetrainEff), F(fuelCapacity), F(fuelDensity),
+        F(fuelPerJoule), F(wearPerJoule), F(maxAeroLoss), F(damageForMaxLoss), F(torqueScale),
+        F(pitServiceScale),
+    };
+#undef F
+    *count = (int)(sizeof f / sizeof f[0]);
+    return f;
+}
+
+float* CarParams::field(const std::string& name) {
+    int n = 0;
+    const Field* f = fields(&n);
+    for (int i = 0; i < n; ++i)
+        if (name == f[i].name) return &(this->*(f[i].ptr));
+    return nullptr;
 }
 
 float compoundGrip(int compound) {
@@ -57,6 +88,15 @@ RRCarSpec CarParams::spec() const {
     s.max_brake_force = maxBrakeForce;
     s.fuel_capacity = fuelCapacity;
     s.fuel_density = fuelDensity;
+    s.cg_height = cgHeight;
+    s.track_front = trackFront;
+    s.track_rear = trackRear;
+    s.downforce_front = downforceFront;
+    s.brake_front = brakeFront;
+    s.max_power = maxPower();
+    s.tire_wear_scale = wearPerJoule / CarParams{}.wearPerJoule;
+    s.fuel_use_scale = fuelPerJoule / CarParams{}.fuelPerJoule;
+    s.pit_service_scale = pitServiceScale;
     return s;
 }
 
@@ -135,7 +175,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const bool hasFuel = c.fuel > 0;
     if (c.gear != 0) {
         if (c.rpm < p.maxRpm && hasFuel) torque = p.engineTorque(c.rpm) * accel;
-        if (engRpm > p.idleRpm) torque -= (1 - accel) * 60.0f * (engRpm / p.maxRpm);  // engine braking
+        if (engRpm > p.idleRpm) torque -= (1 - accel) * p.engineBrake * (engRpm / p.maxRpm);  // engine braking
     }
     // ratio carries the direction (negative in reverse)
     const float fDrive = torque * ratio * p.drivetrainEff / p.wheelRadius;
@@ -144,14 +184,35 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
         c.fuel = std::max(0.0f, c.fuel - torque * engOmega * p.fuelPerJoule * rates.fuel * dt);
     }
 
-    // --- aero and loads ---
+    // --- aero ---
+    // Downforce with its balance: the nose dives under braking and the
+    // balance moves forward; a car sliding sideways loses some of its floor.
     const float aeroLoss = p.maxAeroLoss * std::min(1.0f, c.damage / p.damageForMaxLoss);
-    const float down = p.downforceCoeff * (1 - aeroLoss) * c.vx * c.vx;
+    const float sideslip = std::fabs(c.vx) > 5.0f ? std::atan(c.vy / std::fabs(c.vx)) : 0.0f;
+    const float yawLoss = std::max(0.75f, 1.0f - p.aeroYawLoss * sideslip * sideslip);
+    const float down = p.downforceCoeff * (1 - aeroLoss) * yawLoss * c.vx * c.vx;
+    const float balance = clampf(p.downforceFront - p.aeroPitchShift * c.ax / g, 0.3f, 0.6f);
     const float drag = p.dragCoeff * surf.dragScale * c.vx * std::fabs(c.vx);
-    float fzf = m * g * b / L + down * p.downforceFront - m * c.ax * p.cgHeight / L;
-    float fzr = m * g * a / L + down * (1 - p.downforceFront) + m * c.ax * p.cgHeight / L;
-    fzf = std::max(fzf, 0.05f * m * g);
-    fzr = std::max(fzr, 0.05f * m * g);
+
+    // --- wheel loads ---
+    // Static weight and downforce per axle, longitudinal transfer between the
+    // axles, lateral transfer between left and right split by roll stiffness.
+    // ax/ay lag behind the real accelerations like a sprung car does.
+    const float fzAxle0[2] = {m * g * b / L, m * g * a / L};
+    float fzAxle[2] = {fzAxle0[0] + down * balance - m * c.ax * p.cgHeight / L,
+                       fzAxle0[1] + down * (1 - balance) + m * c.ax * p.cgHeight / L};
+    const float track[2] = {p.trackFront, p.trackRear};
+    const float rollShare[2] = {p.rollStiffFront, 1 - p.rollStiffFront};
+    float fz[4];
+    for (int ax = 0; ax < 2; ++ax) {
+        fzAxle[ax] = std::max(fzAxle[ax], 0.05f * m * g);
+        // ay > 0 is a left turn: load moves to the right-hand (outside) wheels
+        float shift = m * c.ay * p.cgHeight / track[ax] * rollShare[ax];
+        shift = clampf(shift, -0.48f * fzAxle[ax], 0.48f * fzAxle[ax]);
+        fz[2 * ax] = 0.5f * fzAxle[ax] - shift;
+        fz[2 * ax + 1] = 0.5f * fzAxle[ax] + shift;
+    }
+    for (int w = 0; w < 4; ++w) c.wheelLoad[w] = fz[w];
     const float mu = p.tireMu * surf.muScale;
 
     // --- tyre kinematics ---
@@ -161,35 +222,69 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float wfLat = -vfx * sd + vfy * cd;
     const float vrLat = c.vy - b * c.yawRate;
     const float minV = 2.0f;  // keeps slip angles sane near standstill
-    const float alphaF = std::atan(wfLat / std::max(std::fabs(wfLong), minV));
-    const float alphaR = std::atan(vrLat / std::max(std::fabs(c.vx), minV));
+    const float alpha[2] = {std::atan(wfLat / std::max(std::fabs(wfLong), minV)),
+                            std::atan(vrLat / std::max(std::fabs(c.vx), minV))};
 
-    const float fz0f = m * g * b / L, fz0r = m * g * a / L;
-    const float muF = mu * p.frontGrip * axleGrip(c, 0) * std::max(0.7f, 1.0f - p.muLoadDrop * (fzf / fz0f - 1.0f));
-    const float muR = mu * p.rearGrip * axleGrip(c, 1) * std::max(0.7f, 1.0f - p.muLoadDrop * (fzr / fz0r - 1.0f));
-    float fyf = tyreLateral(p, p.frontStiffness, alphaF, fzf, fz0f, muF);
-    float fyr = tyreLateral(p, 1.0f, alphaR, fzr, fz0r, muR);
+    // Per wheel: friction (load sensitive), lateral force from the slip angle,
+    // then the longitudinal demand, all inside that wheel's friction circle.
+    const float axleGripK[2] = {p.frontGrip * axleGrip(c, 0), p.rearGrip * axleGrip(c, 1)};
+    const float stiff[2] = {p.frontStiffness, 1.0f};
+    float muW[4], fyW[4], fxW[4];
+    for (int w = 0; w < 4; ++w) {
+        const int ax = w / 2;
+        const float fz0 = 0.5f * fzAxle0[ax];
+        muW[w] = mu * axleGripK[ax] * std::max(0.6f, 1.0f - p.muLoadDrop * (fz[w] / fz0 - 1.0f));
+        fyW[w] = tyreLateral(p, stiff[ax], alpha[ax], fz[w], fz0, muW[w]);
+    }
 
     // brakes and rolling resistance ramp to zero at standstill so they never push backwards
     const float rampF = clampf(wfLong / 0.5f, -1, 1);
     const float rampR = clampf(c.vx / 0.5f, -1, 1);
     const float fBrake = brake * p.maxBrakeForce;
-    float fxf = -fBrake * p.brakeFront * rampF - p.rollingResist * fzf * rampF;
-    float fxrDemand = fDrive - fBrake * (1 - p.brakeFront) * rampR - p.rollingResist * fzr * rampR;
-    float fxr = fxrDemand;
-
-    // How far the driven axle is past its grip (> 0 = spinning or sliding):
-    // longitudinal demand plus the slip angle relative to the peak, combined.
-    // This is what a traction control would watch.
+    for (int w = 0; w < 2; ++w) fxW[w] = -0.5f * fBrake * p.brakeFront * rampF - p.rollingResist * fz[w] * rampF;
+    for (int w = 2; w < 4; ++w) fxW[w] = -0.5f * fBrake * (1 - p.brakeFront) * rampR - p.rollingResist * fz[w] * rampR;
+    // Drive: half to each rear wheel; what a spinning wheel cannot use goes
+    // partly to the other one through the limited-slip differential.
     {
-        const float peakBa = std::tan(kPi / (2 * p.tireC));  // B*alpha at peak lateral force
-        const float bEff = p.tireB * std::pow(fz0r / fzr, p.loadSens);
-        const float lat = bEff * std::fabs(alphaR) / peakBa;
-        const float lon = fxrDemand / (muR * fzr);
-        c.wheelSpin = std::max(0.0f, std::sqrt(lat * lat + lon * lon) - 1.0f);
+        float d[2] = {0.5f * fDrive, 0.5f * fDrive};
+        for (int k = 0; k < 2; ++k) {
+            const int w = 2 + k, o = 2 + (1 - k);
+            const float room = std::sqrt(std::max(0.0f, muW[w] * muW[w] * fz[w] * fz[w] - fyW[w] * fyW[w]));
+            const float excess = std::fabs(d[k]) - room;
+            if (excess > 0) {
+                const float otherRoom = std::sqrt(std::max(0.0f, muW[o] * muW[o] * fz[o] * fz[o] - fyW[o] * fyW[o]));
+                const float give = std::min(excess * p.diffLock, std::max(0.0f, otherRoom - std::fabs(d[1 - k])));
+                const float sgn = d[k] >= 0 ? 1.0f : -1.0f;
+                d[k] -= sgn * give;
+                d[1 - k] += sgn * give;
+            }
+        }
+        fxW[2] += d[0];
+        fxW[3] += d[1];
     }
-    frictionCircle(fxf, fyf, muF * fzf);
-    frictionCircle(fxr, fyr, muR * fzr);
+
+    // How far each axle is past its grip (gripUse > 1 = sliding or spinning):
+    // the slip angle relative to the peak combined with the longitudinal demand,
+    // worst wheel of the axle. wheelSpin is the rear's excess, what a traction
+    // control would watch.
+    const float peakBa = std::tan(kPi / (2 * p.tireC));  // B*alpha at peak lateral force
+    for (int ax = 0; ax < 2; ++ax) {
+        float worst = 0;
+        for (int w = 2 * ax; w < 2 * ax + 2; ++w) {
+            const float fz0 = 0.5f * fzAxle0[ax];
+            const float bEff = p.tireB * stiff[ax] * std::pow(fz0 / fz[w], p.loadSens);
+            const float lat = bEff * std::fabs(alpha[ax]) / peakBa;
+            const float lon = fxW[w] / (muW[w] * fz[w]);
+            worst = std::max(worst, std::sqrt(lat * lat + lon * lon));
+        }
+        c.gripUse[ax] = worst;
+        c.slipAngle[ax] = alpha[ax];
+    }
+    c.wheelSpin = std::max(0.0f, c.gripUse[1] - 1.0f);
+    for (int w = 0; w < 4; ++w) frictionCircle(fxW[w], fyW[w], muW[w] * fz[w]);
+
+    const float fxf = fxW[0] + fxW[1], fyf = fyW[0] + fyW[1];
+    const float fxr = fxW[2] + fxW[3], fyr = fyW[2] + fyW[3];
 
     // Tyre wear from sliding work: lateral slip speed times lateral force,
     // plus longitudinal work (more when the rear is spinning or locking).
@@ -203,9 +298,12 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     }
 
     // --- body forces ---
+    // Front wheel forces turn with the steering; left/right differences in
+    // longitudinal force (diff, brakes) add a yaw moment.
     float fx = fxf * cd - fyf * sd + fxr - drag;
     float fy = fxf * sd + fyf * cd + fyr;
-    float mz = a * (fxf * sd + fyf * cd) - b * fyr;
+    float mz = a * (fxf * sd + fyf * cd) - b * fyr + 0.5f * p.trackFront * (fxW[1] - fxW[0]) * cd +
+               0.5f * p.trackRear * (fxW[3] - fxW[2]);
     fx -= surf.extraDrag * c.vx;
     fy -= surf.extraDrag * c.vy;
 
@@ -213,7 +311,10 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     c.vx += (axb + c.vy * c.yawRate) * dt;
     c.vy += (ayb - c.vx * c.yawRate) * dt;
     c.yawRate += mz / yawInertia * dt;
-    c.ax += (axb - c.ax) * std::min(1.0f, dt * 20.0f);  // filtered for load transfer
+    // The accelerations the suspension feels, lagging like springs and dampers.
+    const float k = std::min(1.0f, dt / std::max(p.suspensionLag, dt));
+    c.ax += (axb - c.ax) * k;
+    c.ay += (ayb - c.ay) * k;
 
     c.pos += rotate({c.vx, c.vy}, c.yaw) * dt;
     c.yaw = wrapAngle(c.yaw + c.yawRate * dt);

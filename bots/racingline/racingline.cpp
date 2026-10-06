@@ -11,7 +11,15 @@
 //   - overtaking: picks the side with more room around the car ahead and does
 //     not run into the back of it;
 //   - defending: when a car close behind is closing, covers the inside of the
-//     next corner, one move, then holds it.
+//     next corner, one move, then holds it;
+//   - awareness: never moves across a car alongside or one closing from
+//     behind, and brakes in time for the car ahead;
+//   - blue flags: moves aside and lifts for a car that is lapping it;
+//   - the limit: learns, per 20 m of track, how much grip there really is.
+//     Sliding (front or rear past its grip) lowers that stretch's speed and the
+//     braking zone before it; clean laps well inside the limit raise it. On top
+//     of that a driver-aid layer (rr_awareness.h) catches oversteer and manages
+//     wheelspin.
 //
 // params:
 //   grip=<0.8>     share of the tyre friction the speed profile may use
@@ -24,11 +32,14 @@
 //   fuel=<full>    litres at the start
 //   tires=<2>      starting compound: 1 soft, 2 medium, 3 hard
 //   pit=<1>        0 never stops
+//   push=<1.2>     how far above `grip` the learnt limit may go (1 = never)
+//   learn=<1>      0 disables learning the limit
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
 
+#include "../common/rr_awareness.h"
 #include "../common/rr_params.h"
 #include "../common/rr_recovery.h"
 #include "rr/robot_api.h"
@@ -59,6 +70,18 @@ struct RacingLine {
     std::vector<float> speed;    // target speed
     float plannedMass = 0, plannedGrip = 0;
     int plannedLap = -1;
+
+    // learning the limit: grip multiplier per 20 m bin
+    static constexpr float kBin = 20.0f;
+    std::vector<float> adj;
+    float push = 1.2f;
+    bool learn = true, adjDirty = false;
+    int bin = -1;
+    float binUse = 0;          // worst grip use seen in the current bin
+    bool binClean = true;      // no traffic or racecraft moves in this bin
+    bool binLost = false;      // spun, ran off or needed recovery
+    float lastAccel = 0;       // throttle we asked for last time
+    int binOf(int i) const { return std::min((int)adj.size() - 1, (int)(tp[wrap(i)].s / kBin)); }
 
     // racecraft
     float passOffset = 0;        // current shift from the line, m
@@ -159,12 +182,13 @@ void planLine(RacingLine& r) {
 void planSpeed(RacingLine& r, float mass, float tyreGrip) {
     const int n = r.n();
     const float g = 9.81f, m = mass;
-    const float mu = r.car.tire_mu * r.grip * tyreGrip;
+    const float mu0 = r.car.tire_mu * r.grip * tyreGrip;
     const float D = r.car.downforce_coeff, drag = r.car.drag_coeff;
     const float vCap = 95.0f;
     const auto& kappa = r.kappa;
     r.speed.assign(n, vCap);
     for (int i = 0; i < n; ++i) {
+        const float mu = mu0 * r.adj[r.binOf(i)];
         // m v^2 k = mu (m g + D v^2)  ->  v^2 = mu g / (k - mu D / m)
         float den = kappa[i] - mu * D / m;
         if (den > 1e-6f) r.speed[i] = std::min(vCap, std::sqrt(mu * g / den));
@@ -173,6 +197,7 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
     for (int pass = 0; pass < 2; ++pass) {
         for (int i = n - 1; i >= 0; --i) {
             int j = r.wrap(i + 1);
+            const float mu = mu0 * r.adj[r.binOf(j)];
             float v = r.speed[j];
             float normal = m * g + D * v * v;
             float lat = m * v * v * kappa[j];
@@ -198,6 +223,8 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* pa
     r->defend = rr_param(params, "defend", 1.0f) != 0.0f;
     r->wearLimit = rr_param(params, "wear", 0.7f);
     r->usePit = rr_param(params, "pit", 1.0f) != 0.0f && track->pit.has_pit;
+    r->push = std::max(1.0f, rr_param(params, "push", 1.2f));
+    r->learn = rr_param(params, "learn", 1.0f) != 0.0f;
     cfg->initial_fuel = rr_param(params, "fuel", car->fuel_capacity);
     cfg->tire_compound = (int)rr_param(params, "tires", (float)RR_TIRE_MEDIUM);
     r->car = *car;
@@ -205,6 +232,7 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* pa
     r->tp.assign(track->points, track->points + track->num_points);
     r->L = track->length;
     r->ds = track->length / track->num_points;
+    r->adj.assign((size_t)std::ceil(r->L / RacingLine::kBin), 1.0f);
     planLine(*r);
     planSpeed(*r, car->mass + cfg->initial_fuel * car->fuel_density, 1.0f);
     return r;
@@ -355,8 +383,12 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
         if (o.ds <= 0 || o.ds > 15.0f + v || o.pit_state != RR_PIT_NONE) continue;
         bool inPath = std::fabs(o.lateral - pathLat(o.ds)) < 2.3f || (o.ds < 12.0f && std::fabs(o.lateral - myLat) < 2.3f);
         if (!inPath) continue;
-        float gap = o.ds - 4.8f, want = 1.5f + 0.08f * v;
-        *speedCap = std::min(*speedCap, std::max(0.0f, o.speed + 0.6f * (gap - want)));
+        // Gap that grows with speed; close it gently, and if they are
+        // braking hard (or stopped) brake for their speed in time.
+        float gap = o.ds - 4.8f, want = 1.5f + 0.07f * v;
+        float cap = o.speed + 0.6f * (gap - want);
+        if (gap > want) cap = std::min(cap, std::sqrt(o.speed * std::max(0.0f, o.speed) + 2.0f * 9.0f * (gap - want)) + 3.0f);
+        *speedCap = std::min(*speedCap, std::max(0.0f, cap));
     }
 
     float target = line;  // absolute lateral we want
@@ -426,16 +458,18 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
         }
     }
 
-    // Never squeeze a car that is alongside.
-    for (int k = 0; k < in->num_nearby; ++k) {
-        const RROpponent& o = in->nearby[k];
-        if (std::fabs(o.ds) > 6.0f || o.pit_state != RR_PIT_NONE) continue;
-        float d = o.lateral - myLat;
-        if (std::fabs(d) < 1.0f) continue;  // nose to tail: the follow rule handles it
-        if (d > 0) target = std::min(target, o.lateral - 2.7f);
-        else target = std::max(target, o.lateral + 2.7f);
+    // Blue flag: a car is lapping us. Move aside and lift a little.
+    if (in->blue_flag) {
+        float aside = target;
+        *speedCap = std::min(*speedCap, r.speed[idx] * rr_blue_flag(in, myLat, hw, &aside));
+        target = aside;
+        r.defendSide = 0;
     }
-    target = std::clamp(target, -(hw + r.margin - 1.0f), hw + r.margin - 1.0f);
+
+    // Never squeeze a car that is alongside, or move across one closing from behind.
+    float lo = -(hw + r.margin - 1.0f), hi = hw + r.margin - 1.0f;
+    rr_side_limits(in, myLat, v, &lo, &hi);
+    target = std::clamp(target, lo, hi);
     // Off the line the corners are tighter (or wider): slow for them.
     if (std::fabs(target - line) > 0.5f || std::fabs(r.passOffset) > 0.5f) {
         const float mass = r.car.mass + in->fuel * r.car.fuel_density;
@@ -443,6 +477,46 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
         *speedCap = std::min(*speedCap, offLineSpeed(r, idx, lat, mass, in->tire_grip));
     }
     return target - line;
+}
+
+// ---------------------------------------------------------------- the limit
+
+// Learns how much grip each 20 m of track really has. Only laps in clean air
+// count: traffic and racecraft moves put the car off its line.
+void learnLimit(RacingLine& r, const RRSensors* in, int idx, bool busy) {
+    if (!r.learn) return;
+    const int b = r.binOf(idx), nb = (int)r.adj.size();
+    if (b != r.bin) {
+        if (r.bin >= 0 && r.binClean) {
+            if (r.binLost || r.binUse > 1.12f) {
+                // Over the limit: slower here, and brake earlier for it.
+                const float cut = r.binLost ? 0.05f : 0.025f;
+                for (int k = 0; k < 3; ++k) {
+                    float& a = r.adj[(r.bin - k + nb) % nb];
+                    a = std::max(0.8f, a - cut * (1.0f - 0.3f * k));
+                }
+                r.adjDirty = true;
+            } else if (r.binUse > 0.4f && r.binUse < 0.9f) {
+                // Working the tyres but well inside their grip: a little faster next time.
+                float& a = r.adj[r.bin];
+                const float na = std::min(r.push, a + 0.01f);
+                if (na != a) { a = na; r.adjDirty = true; }
+            }
+        }
+        r.bin = b;
+        r.binUse = 0;
+        r.binClean = true;
+        r.binLost = false;
+    }
+    // The rear under power is traction control's business, not the corner speed's.
+    float use = in->grip_use[0];
+    if (r.lastAccel < 0.15f) use = std::max(use, in->grip_use[1]);
+    r.binUse = std::max(r.binUse, use);
+    if (!in->on_track || std::fabs(in->angle) > 0.5f) r.binLost = true;
+    bool traffic = false;
+    for (int k = 0; k < in->num_nearby; ++k)
+        if (in->nearby[k].ds > -10.0f && in->nearby[k].ds < 40.0f) traffic = true;
+    if (busy || traffic || in->pit_state != RR_PIT_NONE || in->speed_x < 15.0f || in->dist_raced < 0) r.binClean = false;
 }
 
 // ---------------------------------------------------------------- driving
@@ -474,7 +548,9 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         std::snprintf(out->status, sizeof out->status, "in the box  %.1f s", in->service_time_left);
         return;
     }
+    learnLimit(*r, in, idx, r->mode != RACE || r->passCar >= 0 || r->defendSide != 0 || std::fabs(r->passOffset) > 0.5f);
     if (in->pit_state == RR_PIT_NONE && r->mode == RACE && rr_recover(&r->recovery, in, out, r->car.max_steer)) {
+        r->binLost = true;
         std::snprintf(out->status, sizeof out->status, "recovering");
         return;
     }
@@ -483,8 +559,10 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     const float mass = r->car.mass + in->fuel * r->car.fuel_density;
     if (in->lap != r->plannedLap) {
         r->plannedLap = in->lap;
-        if (std::fabs(mass - r->plannedMass) > 3.0f || std::fabs(in->tire_grip - r->plannedGrip) > 0.003f)
+        if (r->adjDirty || std::fabs(mass - r->plannedMass) > 3.0f || std::fabs(in->tire_grip - r->plannedGrip) > 0.003f) {
             planSpeed(*r, mass, in->tire_grip);
+            r->adjDirty = false;
+        }
     }
 
     strategy(*r, in);
@@ -573,8 +651,9 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     else if (err > 0) out->accel = std::clamp(0.5f + 0.5f * err, 0.0f, 1.0f);
     else out->brake = std::clamp(-0.25f * err, 0.0f, 1.0f);
     // Traction control: cut quickly when the rear is past its grip, restore slowly.
-    r->tc = in->wheel_spin > 0.02f ? std::max(0.1f, r->tc - 2.0f * in->wheel_spin) : std::min(1.0f, r->tc + 0.05f);
-    out->accel *= r->tc;
+    // Traction, oversteer catches and understeer (see rr_awareness.h).
+    rr_grip_guard(in, out, &r->tc, r->car.max_steer);
+    r->lastAccel = out->accel;
     if (!in->on_track && !pitting) out->accel = std::min(out->accel, 0.5f);
 
     const char* what = pitting              ? r->plan

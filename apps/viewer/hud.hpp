@@ -37,6 +37,8 @@ public:
     void init(const rr::Track& track, const std::string& assetsDir);
     void shutdown();
     void draw(const rr::Race& race, const HudState& st);
+    // Car index of the timing-tower row under `p` (screen pixels), -1 if none.
+    int towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const;
     // The race setup screen; fills `hits` with its clickable areas.
     void drawMenu(const MenuState& m, std::vector<MenuHit>& hits);
 

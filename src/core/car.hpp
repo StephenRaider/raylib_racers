@@ -1,5 +1,7 @@
 #pragma once
 #include "rr/robot_api.h"
+#include <string>
+
 #include "vec2.hpp"
 
 namespace rr {
@@ -12,22 +14,33 @@ struct CarParams {
     float length = 4.6f, width = 1.8f;
     float cgToFront = 1.62f, cgToRear = 1.40f;  // 46% of the static weight on the front axle
     float cgHeight = 0.27f;
+    // Suspension: wheel-centre track widths, the front axle's share of the roll
+    // stiffness (more at the front = more stable at the limit) and how quickly
+    // load moves between the wheels (springs and dampers, as a first-order lag).
+    float trackFront = 1.46f, trackRear = 1.40f;
+    float rollStiffFront = 0.56f;
+    float suspensionLag = 0.06f;  // s
+    // Differential locking: share of the drive torque a spinning inside wheel
+    // hands to the outside one (0 open diff, 1 spool).
+    float diffLock = 0.55f;
     float yawInertia = 850;
     float maxSteer = 0.30f;       // rad
     float steerRate = 2.5f;       // rad/s at the road wheels
     float tireMu = 1.65f;         // slicks / grooved tyres, mechanical grip
-    float tireB = 18.0f, tireC = 1.3f;  // simplified magic formula
+    float tireB = 26.0f, tireC = 1.3f;  // simplified magic formula: peak slip ~6 deg static
     // Rear tyres a little stiffer and grippier than the fronts: a stable,
     // mildly understeering car, like most racing setups.
     float frontGrip = 0.96f, rearGrip = 1.04f;
-    float frontStiffness = 0.8f;   // scales tireB at the front
+    float frontStiffness = 0.85f;  // scales tireB at the front
     // Load sensitivity: cornering stiffness grows like Fz^(1 - loadSens) and
     // friction drops by muLoadDrop per extra static load.
-    float loadSens = 0.5f;
+    float loadSens = 0.3f;
     float muLoadDrop = 0.08f;
     float dragCoeff = 0.75f;      // 0.5 rho Cd A (Cd A ~ 1.2 m^2)
     float downforceCoeff = 2.3f;  // 0.5 rho Cl A (lift-to-drag ~ 3)
-    float downforceFront = 0.42f; // share on the front axle
+    float downforceFront = 0.42f; // share on the front axle (aero balance)
+    float aeroPitchShift = 0.02f; // balance moves forward this much per g of braking (nose dives)
+    float aeroYawLoss = 0.8f;     // downforce lost per rad^2 of sideslip (a sliding car loses its floor)
     float rollingResist = 0.015f;
     float wheelRadius = 0.33f;
     float finalDrive = 3.0f;
@@ -37,7 +50,8 @@ struct CarParams {
     float reverseRatio = 8.0f;
     float idleRpm = 4000, maxRpm = 19000;
     float maxBrakeForce = 30000;  // N, carbon discs: enough to lock the wheels at speed
-    float brakeFront = 0.58f;     // brake bias
+    float brakeFront = 0.60f;     // brake bias
+    float engineBrake = 35.0f;    // N m of engine braking at max rpm, off throttle
     float drivetrainEff = 0.9f;
 
     // Fuel: mass is the dry car with driver; fuel adds to it.
@@ -48,10 +62,20 @@ struct CarParams {
     float wearPerJoule = 2.0e-8f;
     // Damage costs downforce: up to maxAeroLoss at damageForMaxLoss.
     float maxAeroLoss = 0.35f, damageForMaxLoss = 8000.0f;
+    // Development multipliers (see specs/development.json): engine output, and
+    // how long this team's pit crew takes.
+    float torqueScale = 1.0f;
+    float pitServiceScale = 1.0f;
 
     float wheelbase() const { return cgToFront + cgToRear; }
     float engineTorque(float rpm) const;  // N m at full throttle
+    float maxPower() const;               // W
     RRCarSpec spec() const;
+
+    // Every tunable number by name, for spec files and development rules.
+    struct Field { const char* name; float CarParams::*ptr; };
+    static const Field* fields(int* count);
+    float* field(const std::string& name);
 };
 
 struct CarState {
@@ -62,7 +86,10 @@ struct CarState {
     float steerAngle = 0;   // actual road-wheel angle
     int gear = 1;
     float rpm = 0;
-    float ax = 0;           // last longitudinal accel (load transfer)
+    float ax = 0, ay = 0;   // body-frame accelerations as the suspension feels them (load transfer)
+    float wheelLoad[4] = {0, 0, 0, 0};  // N: front left, front right, rear left, rear right
+    float gripUse[2] = {0, 0};
+    float slipAngle[2] = {0, 0};          // front, rear: tyre force asked / available (> 1 = sliding)
     float wheelSpin = 0;
     float wheelRot = 0;     // for rendering
     float damage = 0;

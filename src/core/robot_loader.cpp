@@ -86,7 +86,7 @@ std::shared_ptr<RobotModule> RobotModule::load(const std::string& nameOrPath,
         return nullptr;
     }
     const RRRobotApi* api = entry();
-    if (!api || api->abi_version != RR_ABI_VERSION || !api->create || !api->drive) {
+    if (!api || api->abi_version < RR_ABI_MIN_VERSION || api->abi_version > RR_ABI_VERSION || !api->create || !api->drive) {
         closeLib(h);
         if (err)
             *err = path + ": incompatible robot (ABI " + std::to_string(api ? api->abi_version : -1) +
