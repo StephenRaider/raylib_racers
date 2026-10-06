@@ -1,0 +1,22 @@
+{
+  "about": "Development rules for asymmetric car specs. Each team spends tokens on categories; each token changes the listed CarParams fields by the given fraction (value *= (1 + per_token)^tokens). Negative tokens trade a category down to free budget for others.",
+  "budget": 10,
+  "min_tokens": -3,
+  "max_tokens": 5,
+  "categories": [
+    {"key": "top_speed", "label": "Top speed", "about": "Lower drag and a little more power: faster on the straights.",
+     "effects": {"dragCoeff": -0.03, "torqueScale": 0.01}},
+    {"key": "downforce", "label": "Downforce", "about": "More aero grip in fast corners, at some cost in drag.",
+     "effects": {"downforceCoeff": 0.03, "dragCoeff": 0.012}},
+    {"key": "handling", "label": "Handling", "about": "Mechanical grip and a more agile chassis: slow corners and traction.",
+     "effects": {"tireMu": 0.008, "yawInertia": -0.02}},
+    {"key": "power", "label": "Engine", "about": "More torque everywhere, at a higher fuel burn.",
+     "effects": {"torqueScale": 0.02, "fuelPerJoule": 0.012}},
+    {"key": "tire_management", "label": "Tyre management", "about": "Kinder suspension and cooling: tyres wear more slowly.",
+     "effects": {"wearPerJoule": -0.06}},
+    {"key": "fuel_efficiency", "label": "Fuel efficiency", "about": "Burns less fuel per lap: lighter cars or longer stints.",
+     "effects": {"fuelPerJoule": -0.03}},
+    {"key": "pit_crew", "label": "Pit crew", "about": "Faster stops: service time per token.",
+     "effects": {"pitServiceScale": -0.06}}
+  ]
+}
