@@ -67,7 +67,7 @@ SCR / TORCS-style sensors:
 | `opponents[36]` | nearest car in each 10° sector, m (200 if none). Sector `i` covers [-180+10i, -170+10i) degrees; 0° is straight ahead |
 | `speed_x`, `speed_y`, `yaw_rate` | body-frame velocity (x forward, y left) and yaw rate |
 | `rpm`, `gear`, `wheel_spin` | `wheel_spin` > 0 means the rear tyres are past their grip: use it for traction control |
-| `damage` | accumulated collision damage; costs downforce (up to 35% at 8000), repaired in the pits |
+| `damage` | accumulated collision damage, repaired in the pits. Growing linearly to 8000 it costs up to 35% of the downforce, 12% of the engine power and 8% of the mechanical grip, and adds 10% drag |
 
 Race state: `dist_from_start`, `dist_raced`, `lap`, `race_laps`, `race_pos`,
 `num_cars`, `cur_lap_time`, `last_lap_time`, `best_lap_time`.
@@ -182,7 +182,11 @@ lasts, and drives a blended path into and out of its box.
   inside of the next corner with one move, hold it for a few seconds, then
   return to the line.
 - **Space**: never steer into a car that is alongside, or across one that is
-  closing from behind (`rr_side_limits`).
+  closing from behind (`rr_side_limits`). The line, a pass and a defence are
+  all clamped to that space; when a pass is squeezed shut the car drops back
+  behind instead of forcing it.
+- **Aggression**: `attack` (default 1, 0.5 to 2) scales the following gap and
+  how early a pass starts; the viewer's "racingline aggressive" uses 1.4.
 - **Blue flags**: move to the side away from the lapping car and lift a
   little until it is by (`rr_blue_flag`).
 - **The limit**: it learns how much grip each 20 m of track really has. A
@@ -190,6 +194,10 @@ lasts, and drives a blended path into and out of its box.
   slower, and so does the braking zone before it; stretches driven well inside
   the limit on clean laps get a little faster each lap (up to `push`). On top
   of that `rr_grip_guard` manages wheelspin and catches oversteer.
+
+Once a car has taken the flag the host takes over gradually: the robot keeps
+steering at a reduced pace until the host takes it into the pit lane and parks
+it.
 
 Its `pass=0` and `defend=0` parameters switch the behaviours off for
 comparison.

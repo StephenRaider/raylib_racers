@@ -325,6 +325,10 @@ void Race::computeSensors(Car& c) {
 // Blue flags: a car about to lap us is close behind. Holding it up for too
 // long costs a time penalty.
 void Race::updateBlueFlags() {
+    if (over_) {
+        for (Car& c : cars_) c.blueCar = -1;
+        return;
+    }
     const float L = track_.length();
     const float tick = cfg_.dt * robotPeriod_;
     for (size_t i = 0; i < cars_.size(); ++i) {
@@ -499,6 +503,14 @@ void Race::resolveCarPair(Car& a, Car& b) {
     a.state.yawRate += cross2(rA, imp) / Ia;
     b.state.yawRate -= cross2(rB, imp) / Ib;
     if (-vrel > 1.0f) {
+        if (!over_) {
+            int ia = (int)(&a - &cars_[0]), ib = (int)(&b - &cars_[0]);
+            float ds = wrapDs(b.trackS - a.trackS);
+            if (ds < 0) { std::swap(ia, ib); ds = -ds; }
+            const Car& ca = cars_[ia];
+            const Car& cb = cars_[ib];
+            contacts_.push_back({time_, ia, ib, -vrel, ds, cb.lateral - ca.lateral, wrapAngle(cb.state.yaw - ca.state.yaw)});
+        }
         a.state.damage += vrel * vrel;
         b.state.damage += vrel * vrel;
         a.collisions++;
@@ -519,7 +531,7 @@ void Race::updateProgress(Car& c) {
     c.halfWidth = loc.halfWidth;
     c.onTrack = std::fabs(loc.lateral) <= loc.halfWidth;
 
-    if (c.finished || c.dnf) return;
+    if (c.finished || c.dnf || over_) return;
 
     if (c.distRaced >= 0) {
         size_t k = (size_t)(c.distRaced / kCheckpointSpacing);
@@ -576,7 +588,7 @@ void Race::updatePit(Car& c) {
     const bool inLane = track_.inPitLane(c.trackS) && c.lateral * side > divMid;
     const float speed = std::sqrt(c.state.vx * c.state.vx + c.state.vy * c.state.vy);
 
-    if (inLane) c.pitLaneTime += cfg_.dt;
+    if (inLane && !c.finished && !over_) c.pitLaneTime += cfg_.dt;
     switch (c.pitState) {
     case RR_PIT_NONE:
         if (inLane && !c.dnf) c.pitState = RR_PIT_LANE;
@@ -585,7 +597,7 @@ void Race::updatePit(Car& c) {
         if (!inLane) { c.pitState = RR_PIT_NONE; break; }
         float boxLat = c.halfWidth + Track::kBoxCentre;
         bool atBox = std::fabs(wrapDs(c.trackS - c.pitBoxS)) < 2.5f && std::fabs(c.lateral * side - boxLat) < 2.0f;
-        if (c.control.pit_request && atBox && speed < 0.5f && !c.finished) {
+        if (c.control.pit_request && atBox && speed < 0.5f && !c.finished && !over_) {
             c.pitOrder = c.control;
             float fuel = clampf(c.pitOrder.pit_fuel, 0.0f, c.phys.fuelCapacity - c.state.fuel);
             c.pitOrder.pit_fuel = fuel;
@@ -650,8 +662,123 @@ void Race::updateOrder() {
     }
 }
 
+bool Race::cooledDown() const {
+    if (!over_) return false;
+    if (time_ > overTime_ + 200.0) return true;
+    for (const Car& c : cars_)
+        if (!c.dnf && !c.parked) return false;
+    return true;
+}
+
+// Cool-down: once a car has taken the flag (or the race is over) its robot
+// keeps driving at a gentle pace (the host caps the speed) until it nears the
+// pit entry; then the host drives it into the pit lane and parks it there.
+RRControl Race::coolDownControl(Car& c) {
+    RRControl k{};
+    k.gear = c.state.gear;
+    if (c.parked) {
+        k.brake = 1;
+        return k;
+    }
+    const float kCoolSpeed = 42.0f;
+    const float L = track_.length();
+    const float v = std::max(0.0f, c.state.vx);
+    const bool pit = track_.hasPit();
+    const RRPitInfo& p = track_.pit();
+    auto fwd = [&](float a, float b) { float d = std::fmod(b - a, L); return d < 0 ? d + L : d; };
+    float laneLen = pit ? fwd(p.lane_start_s, p.lane_end_s) : 0.0f;
+    // Commit to the pits 250 m before the entry (otherwise do another lap).
+    if (pit && c.parkSlot < 0) {
+        const float toEntry = fwd(c.trackS, p.entry_s);
+        const float slowTo = 0.9f * p.speed_limit;
+        const float need = std::max(0.0f, v * v - slowTo * slowTo) / (2 * 5.0f) + 40.0f;  // still in time to slow down
+        if (toEntry < 250.0f && toEntry > need - fwd(p.entry_s, p.lane_start_s)) c.parkSlot = parkedSlots_++;
+    }
+    const bool committed = c.parkSlot >= 0;
+    if (!committed) {
+        // The robot drives; the host holds it to cool-down pace.
+        k = c.control;
+        k.pit_request = 0;
+        const float over = c.state.vx - kCoolSpeed;
+        if (over > 0) {
+            k.accel = 0;
+            k.brake = std::max(k.brake, clampf(over * 0.005f, 0.0f, 0.06f));  // ease off, no brake test for the cars still racing
+        }
+        if (!pit && (c.finished || time_ > overTime_ + 20.0)) {
+            // No pit lane: pull over to the side and stop.
+            k.accel = 0;
+            k.brake = std::max(k.brake, 0.3f);
+            if (c.state.vx < 0.5f) c.parked = true;
+        }
+        return k;
+    }
+    const float spacing = 9.0f;
+    const int slots = std::max(1, (int)((laneLen - 40.0f) / spacing));
+    const float parkS = pit ? std::fmod(p.lane_end_s - 20.0f - spacing * (float)(std::max(0, c.parkSlot) % slots) + L, L) : 0.0f;
+
+    // Lateral to drive at, as a function of track distance.
+    auto lateralAt = [&](float s) -> float {
+        if (!pit || !committed) return 0.0f;
+        const float edge = p.side * (track_.at(track_.indexAt(s)).halfWidth - 2.5f);
+        if (track_.inSpan(s, p.entry_s, p.lane_start_s)) {
+            float u = fwd(p.entry_s, s) / std::max(10.0f, fwd(p.entry_s, p.lane_start_s));
+            u = u * u * (3 - 2 * u);
+            return edge + (p.lane_offset - edge) * u;
+        }
+        if (track_.inSpan(s, p.lane_start_s, p.lane_end_s)) {
+            float toPark = fwd(s, parkS);
+            if (toPark > laneLen) return p.box_offset;  // just past the spot
+            if (toPark < 15.0f) {
+                float u = 1.0f - toPark / 15.0f;
+                u = u * u * (3 - 2 * u);
+                return p.lane_offset + (p.box_offset - p.lane_offset) * u;
+            }
+            return p.lane_offset;
+        }
+        float toEntry = fwd(s, p.entry_s);
+        if (toEntry < 250.0f) return edge * (1.0f - toEntry / 250.0f);
+        return 0.0f;
+    };
+
+    // Pure pursuit on that path.
+    const float ld = 8.0f + 0.25f * v;
+    const float sAhead = std::fmod(c.trackS + ld, L);
+    Vec2 tgt = track_.pointAt(sAhead, lateralAt(sAhead));
+    Vec2 d = rotate(tgt - c.state.pos, -c.state.yaw);
+    float alpha = std::atan2(d.y, d.x);
+    float delta = std::atan(2.0f * c.phys.wheelbase() * std::sin(alpha) / std::max(length(d), 1.0f));
+    k.steer = clampf(delta / c.phys.maxSteer, -1, 1);
+
+    // Speed: an easy pace for the corners ahead, the pit limit in the lane,
+    // then stop at the parking spot.
+    float vT = kCoolSpeed;
+    for (float a = 0; a < 120.0f; a += 4.0f) {
+        float kap = std::fabs(track_.at(track_.indexAt(c.trackS + a)).curvature);
+        float vc = kap > 1e-4f ? std::sqrt(1.1f * 9.81f / kap) : 1e9f;
+        vT = std::min(vT, std::sqrt(vc * vc + 2 * 6.0f * a));
+    }
+    if (pit) {
+        const bool inLane = track_.inSpan(c.trackS, p.lane_start_s, p.lane_end_s);
+        float toLane = inLane ? 0.0f : fwd(c.trackS, p.lane_start_s);
+        if (c.parkSlot >= 0 || toLane < 300.0f)
+            vT = std::min(vT, std::sqrt(p.speed_limit * 0.9f * p.speed_limit * 0.9f + 2 * 5.0f * toLane));
+        if (inLane && c.parkSlot >= 0) {
+            float toPark = fwd(c.trackS, parkS);
+            if (toPark > laneLen) toPark = 0;  // overshot: stop here
+            vT = std::min(vT, std::sqrt(2 * 3.0f * std::max(0.0f, toPark - 0.5f)));
+            if (toPark < 1.0f && v < 0.5f) c.parked = true;
+        }
+    }
+    // Gentle inputs: no wheelspin, no locked wheels.
+    float err = vT - v;
+    if (vT < 0.3f) k.brake = v > 2.0f ? 0.4f : 1.0f;
+    else if (err > 0) k.accel = c.state.wheelSpin > 0 ? 0.0f : clampf(0.15f + 0.1f * err, 0, 0.5f);
+    else k.brake = clampf(-0.08f * err, 0, 0.4f);
+    return k;
+}
+
 void Race::step() {
-    if (over_) return;
+    if (over_ && cooledDown()) return;
     if (steps_ % robotPeriod_ == 0) callRobots();
 
     const float dt = cfg_.dt;
@@ -664,7 +791,9 @@ void Race::step() {
         }
         surf.dragScale = 1.0f - slipstream(c);
         RRControl in = c.control;
-        if (c.pitState == RR_PIT_SERVICE) {
+        if (!c.dnf && (c.finished || over_)) {
+            in = coolDownControl(c);
+        } else if (c.pitState == RR_PIT_SERVICE) {
             in = RRControl{};
             in.brake = 1;
             in.gear = c.state.gear;
@@ -676,8 +805,8 @@ void Race::step() {
                 in.brake = std::max(in.brake, clampf(over * 0.3f, 0.0f, 1.0f));
             }
         }
-        stepCar(c.state, c.phys, in, c.robotCfg.auto_gear != 0, surf, rates, dt);
-        if (c.pitState == RR_PIT_SERVICE) {
+        stepCar(c.state, c.phys, in, (c.robotCfg.auto_gear != 0) || c.finished || over_, surf, rates, dt);
+        if (c.pitState == RR_PIT_SERVICE || c.parked) {
             c.state.vx = c.state.vy = c.state.yawRate = 0;
         }
     }
@@ -691,6 +820,7 @@ void Race::step() {
         updateProgress(c);
         updatePit(c);
     }
+    if (over_) return;  // cool-down: the classification is final
     updateOrder();
 
     bool allDone = true;
@@ -700,6 +830,7 @@ void Race::step() {
     bool timeout = leaderFinish_ >= 0 && time_ > leaderFinish_ + std::max(60.0, track_.length() / 10.0);
     if (allDone || timeout || time_ >= maxTime_) {
         over_ = true;
+        overTime_ = time_;
         for (Car& c : cars_)
             if (!c.finished && !c.dnf && time_ >= maxTime_) c.dnfReason = "time limit";
         for (Car& c : cars_)

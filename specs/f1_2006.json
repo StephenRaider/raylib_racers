@@ -45,6 +45,9 @@
     "wearPerJoule": 2e-08,
     "maxAeroLoss": 0.35,
     "damageForMaxLoss": 8000,
+    "maxDragGain": 0.1,
+    "maxPowerLoss": 0.12,
+    "maxGripLoss": 0.08,
     "torqueScale": 1,
     "pitServiceScale": 1
   },

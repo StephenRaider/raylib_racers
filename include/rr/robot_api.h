@@ -168,7 +168,8 @@ typedef struct RRSensors {
     float rpm;
     int gear;             /* -1 reverse, 0 neutral, 1..num_gears */
     float wheel_spin;     /* how far the driven (rear) tyres are past their grip limit: 0 = gripping, 0.2 = asking 20% more than they can give */
-    float damage;         /* accumulated collision damage, arbitrary units; costs downforce (up to 35% at 8000), repaired in the pits */
+    float damage;         /* accumulated collision damage, arbitrary units, repaired in the pits. Growing linearly to
+                             8000 it costs up to 35% downforce, 12% engine power and 8% mechanical grip, and adds 10% drag */
 
     /* race state */
     float dist_from_start;  /* distance along the centreline since the start line on this lap, m */

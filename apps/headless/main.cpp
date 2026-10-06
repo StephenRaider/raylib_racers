@@ -48,6 +48,18 @@ int main(int argc, char** argv) {
             nextReport += 30.0;
         }
     }
+    if (cfg.coolDown) {
+        double flag = race.time();
+        while (!race.cooledDown()) race.step();
+        int parked = 0, running = 0;
+        for (const auto& c : race.cars()) {
+            if (c.dnf) continue;
+            ++running;
+            if (c.parked) ++parked;
+        }
+        std::printf("cool-down: %d/%d cars parked in the pit lane %.0f s after the flag\n", parked, running,
+                    race.time() - flag);
+    }
     double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     race.printResults(stdout);

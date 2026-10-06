@@ -29,6 +29,7 @@ struct RaceConfig {
     std::string jsonOut;
     std::string telemetryDir;
     bool quiet = false;
+    bool coolDown = false;  // keep running after the flag until the cars have parked in the pit lane
 
     // viewer only
     int width = 1600, height = 900;

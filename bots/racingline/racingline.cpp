@@ -34,6 +34,7 @@
 //   pit=<1>        0 never stops
 //   push=<1.2>     how far above `grip` the learnt limit may go (1 = never)
 //   learn=<1>      0 disables learning the limit
+//   attack=<1>     racecraft aggression: > 1 follows closer and looks for gaps sooner
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -69,6 +70,9 @@ struct RacingLine {
     float yawGain = 0.06f;
     std::vector<float> speed;    // target speed
     float plannedMass = 0, plannedGrip = 0;
+    float damage = 0;            // 0..1, as the speed profile last assumed
+    float attack = 1.0f;         // racecraft: > 1 follows closer and goes for gaps sooner
+    float sideLo = -1e9f, sideHi = 1e9f;  // lateral room left by cars alongside (absolute, m)
     int plannedLap = -1;
 
     // learning the limit: grip multiplier per 20 m bin
@@ -182,8 +186,9 @@ void planLine(RacingLine& r) {
 void planSpeed(RacingLine& r, float mass, float tyreGrip) {
     const int n = r.n();
     const float g = 9.81f, m = mass;
-    const float mu0 = r.car.tire_mu * r.grip * tyreGrip;
-    const float D = r.car.downforce_coeff, drag = r.car.drag_coeff;
+    // Damage costs downforce and mechanical grip (see RRSensors.damage).
+    const float mu0 = r.car.tire_mu * r.grip * tyreGrip * (1 - 0.08f * r.damage);
+    const float D = r.car.downforce_coeff * (1 - 0.35f * r.damage), drag = r.car.drag_coeff * (1 + 0.1f * r.damage);
     const float vCap = 95.0f;
     const auto& kappa = r.kappa;
     r.speed.assign(n, vCap);
@@ -225,6 +230,7 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int, const char* pa
     r->usePit = rr_param(params, "pit", 1.0f) != 0.0f && track->pit.has_pit;
     r->push = std::max(1.0f, rr_param(params, "push", 1.2f));
     r->learn = rr_param(params, "learn", 1.0f) != 0.0f;
+    r->attack = std::clamp(rr_param(params, "attack", 1.0f), 0.5f, 2.0f);
     cfg->initial_fuel = rr_param(params, "fuel", car->fuel_capacity);
     cfg->tire_compound = (int)rr_param(params, "tires", (float)RR_TIRE_MEDIUM);
     r->car = *car;
@@ -271,7 +277,9 @@ void strategy(RacingLine& r, const RRSensors* in) {
     const bool fuelShort = fuelAtEntry - fuelPerM * toGo < reserve &&                    // won't make the flag
                            fuelAtEntry - fuelPerM * r.L < reserve + fuelPerM * 400.0f;  // nor the next pit entry
     const bool tyresGone = wearAtEntry + wearPerM * r.L > r.wearLimit && wearPerM * toGo > 0.05f;
-    if (!fuelShort && !tyresGone) return;
+    // Heavy damage (a quarter of the downforce gone) is worth a stop to repair.
+    const bool broken = in->damage > 5000.0f && toGo > 3.0f * r.L;
+    if (!fuelShort && !tyresGone && !broken) return;
 
     RRControl o{};
     o.pit_request = 1;
@@ -385,7 +393,7 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
         if (!inPath) continue;
         // Gap that grows with speed; close it gently, and if they are
         // braking hard (or stopped) brake for their speed in time.
-        float gap = o.ds - 4.8f, want = 1.5f + 0.07f * v;
+        float gap = o.ds - 4.8f, want = (1.5f + 0.07f * v) / r.attack;
         float cap = o.speed + 0.6f * (gap - want);
         if (gap > want) cap = std::min(cap, std::sqrt(o.speed * std::max(0.0f, o.speed) + 2.0f * 9.0f * (gap - want)) + 3.0f);
         *speedCap = std::min(*speedCap, std::max(0.0f, cap));
@@ -398,7 +406,7 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
     // The side is held once alongside, and re-chosen while still behind (the
     // car ahead may move to defend).
     if (r.pass) {
-        const RROpponent* a = carAhead(in, 8.0f + 0.15f * v);
+        const RROpponent* a = carAhead(in, (8.0f + 0.15f * v) * r.attack);
         if (a && (v > a->speed + 0.5f || a->ds < 12.0f)) {
             float roomLeft = hw - a->lateral, roomRight = hw + a->lateral;
             bool alongside = a->ds < 7.0f && r.passCar == a->car_index;
@@ -469,12 +477,27 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
     // Never squeeze a car that is alongside, or move across one closing from behind.
     float lo = -(hw + r.margin - 1.0f), hi = hw + r.margin - 1.0f;
     rr_side_limits(in, myLat, v, &lo, &hi);
+    r.sideLo = lo;
+    r.sideHi = hi;
+    const float wanted = target;
     target = std::clamp(target, lo, hi);
-    // Off the line the corners are tighter (or wider): slow for them.
-    if (std::fabs(target - line) > 0.5f || std::fabs(r.passOffset) > 0.5f) {
+    // Squeezed out of a pass (another car is where we wanted to go): back out
+    // and tuck in behind rather than force it.
+    if (busy && std::fabs(target - wanted) > 0.8f && r.passCar >= 0) {
+        for (int k = 0; k < in->num_nearby; ++k) {
+            const RROpponent& o = in->nearby[k];
+            if (o.car_index == r.passCar && o.ds > -2.0f && o.ds < 10.0f)
+                *speedCap = std::min(*speedCap, std::max(0.0f, o.speed - 1.5f));
+        }
+        r.passSide = 0;
+    }
+    // Off the line the corners are tighter (or wider): slow for them, with a
+    // margin, since there is a car next to us.
+    const float myPath = std::clamp(line + r.passOffset, lo, hi);
+    if (std::fabs(target - line) > 0.5f || std::fabs(myPath - line) > 0.5f) {
         const float mass = r.car.mass + in->fuel * r.car.fuel_density;
-        float lat = std::fabs(target - line) > std::fabs(r.passOffset) ? target : line + r.passOffset;
-        *speedCap = std::min(*speedCap, offLineSpeed(r, idx, lat, mass, in->tire_grip));
+        float lat = std::fabs(target - line) > std::fabs(myPath - line) ? target : myPath;
+        *speedCap = std::min(*speedCap, 0.96f * offLineSpeed(r, idx, lat, mass, in->tire_grip));
     }
     return target - line;
 }
@@ -555,8 +578,14 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         return;
     }
 
-    // Re-plan the speed profile for the fuel load and tyres once a lap.
+    // Re-plan the speed profile for the fuel load and tyres once a lap, and at
+    // once after a hit that cost downforce.
     const float mass = r->car.mass + in->fuel * r->car.fuel_density;
+    const float dmg = std::min(1.0f, in->damage / 8000.0f);
+    if (std::fabs(dmg - r->damage) > 0.03f) {
+        r->damage = dmg;
+        planSpeed(*r, mass, in->tire_grip);
+    }
     if (in->lap != r->plannedLap) {
         r->plannedLap = in->lap;
         if (r->adjDirty || std::fabs(mass - r->plannedMass) > 3.0f || std::fabs(in->tire_grip - r->plannedGrip) > 0.003f) {
@@ -593,8 +622,15 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         r->passOffset += std::clamp(step, -2.0f * dt, 2.0f * dt);
     }
 
+    // The path itself (not just the racecraft target) keeps clear of cars
+    // alongside: the racing line moves across the track into corners.
+    if (pitting) {
+        r->sideLo = -1e9f;
+        r->sideHi = 1e9f;
+    }
     auto targetOffset = [&](int i) {
-        return pitting ? pitOffset(*r, i, in->pit_box_s, serviced) : r->offset[r->wrap(i)] + r->passOffset;
+        return pitting ? pitOffset(*r, i, in->pit_box_s, serviced)
+                       : std::clamp(r->offset[r->wrap(i)] + r->passOffset, r->sideLo, r->sideHi);
     };
 
     // Pure pursuit on the path, plus a cross-track term (pure pursuit alone
@@ -666,6 +702,8 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     out->debug[2] = r->passOffset;
     out->debug[3] = (float)r->mode;
     out->debug[4] = r->defendSide;
+    out->debug[5] = std::max(-99.0f, r->sideLo);
+    out->debug[6] = std::min(99.0f, r->sideHi);
 }
 
 void destroy(void* self) { delete static_cast<RacingLine*>(self); }

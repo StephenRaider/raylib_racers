@@ -35,7 +35,7 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(dragCoeff), F(downforceCoeff), F(downforceFront), F(aeroPitchShift), F(aeroYawLoss),
         F(rollingResist), F(wheelRadius), F(finalDrive), F(reverseRatio), F(idleRpm), F(maxRpm),
         F(maxBrakeForce), F(brakeFront), F(engineBrake), F(drivetrainEff), F(fuelCapacity), F(fuelDensity),
-        F(fuelPerJoule), F(wearPerJoule), F(maxAeroLoss), F(damageForMaxLoss), F(torqueScale),
+        F(fuelPerJoule), F(wearPerJoule), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
         F(pitServiceScale),
     };
 #undef F
@@ -65,6 +65,8 @@ float wornGrip(float w) {
 }
 
 float axleGrip(const CarState& c, int axle) { return compoundGrip(c.compound) * wornGrip(c.tireWear[axle]); }
+
+float damageLevel(const CarParams& p, const CarState& c) { return std::min(1.0f, c.damage / p.damageForMaxLoss); }
 
 float carMass(const CarParams& p, const CarState& c) { return p.mass + std::max(0.0f, c.fuel) * p.fuelDensity; }
 
@@ -152,6 +154,9 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
         if (in.gear == -1) {
             if (c.vx < 1.0f) c.gear = -1;
         } else {
+            // Forward asked while still rolling backwards: neutral until the car has
+            // (nearly) stopped, so the throttle can't keep driving it in reverse.
+            if (c.gear < 0 && c.vx <= -1.0f) c.gear = 0;
             if (c.gear <= 0 && c.vx > -1.0f) c.gear = 1;
             if (c.gear > 0) {
                 float rpm = rpmFor(p, c.vx, c.gear);
@@ -174,7 +179,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     float torque = 0;
     const bool hasFuel = c.fuel > 0;
     if (c.gear != 0) {
-        if (c.rpm < p.maxRpm && hasFuel) torque = p.engineTorque(c.rpm) * accel;
+        if (c.rpm < p.maxRpm && hasFuel) torque = p.engineTorque(c.rpm) * accel * (1 - p.maxPowerLoss * damageLevel(p, c));
         if (engRpm > p.idleRpm) torque -= (1 - accel) * p.engineBrake * (engRpm / p.maxRpm);  // engine braking
     }
     // ratio carries the direction (negative in reverse)
@@ -187,12 +192,13 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     // --- aero ---
     // Downforce with its balance: the nose dives under braking and the
     // balance moves forward; a car sliding sideways loses some of its floor.
-    const float aeroLoss = p.maxAeroLoss * std::min(1.0f, c.damage / p.damageForMaxLoss);
+    const float dmg = damageLevel(p, c);
+    const float aeroLoss = p.maxAeroLoss * dmg;
     const float sideslip = std::fabs(c.vx) > 5.0f ? std::atan(c.vy / std::fabs(c.vx)) : 0.0f;
     const float yawLoss = std::max(0.75f, 1.0f - p.aeroYawLoss * sideslip * sideslip);
     const float down = p.downforceCoeff * (1 - aeroLoss) * yawLoss * c.vx * c.vx;
     const float balance = clampf(p.downforceFront - p.aeroPitchShift * c.ax / g, 0.3f, 0.6f);
-    const float drag = p.dragCoeff * surf.dragScale * c.vx * std::fabs(c.vx);
+    const float drag = p.dragCoeff * (1 + p.maxDragGain * dmg) * surf.dragScale * c.vx * std::fabs(c.vx);
 
     // --- wheel loads ---
     // Static weight and downforce per axle, longitudinal transfer between the
@@ -213,7 +219,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
         fz[2 * ax + 1] = 0.5f * fzAxle[ax] + shift;
     }
     for (int w = 0; w < 4; ++w) c.wheelLoad[w] = fz[w];
-    const float mu = p.tireMu * surf.muScale;
+    const float mu = p.tireMu * surf.muScale * (1 - p.maxGripLoss * dmg);
 
     // --- tyre kinematics ---
     const float cd = std::cos(c.steerAngle), sd = std::sin(c.steerAngle);

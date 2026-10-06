@@ -60,8 +60,11 @@ struct CarParams {
     float fuelPerJoule = 1.2e-7f; // litres per joule of engine work (~25% efficient at 34 MJ/l)
     // Tyre wear: wear per joule of sliding work, before compound and race multipliers.
     float wearPerJoule = 2.0e-8f;
-    // Damage costs downforce: up to maxAeroLoss at damageForMaxLoss.
+    // Damage, growing linearly up to damageForMaxLoss: broken wings and floor
+    // cost downforce and add drag, a hurt engine loses power, bent suspension
+    // loses mechanical grip.
     float maxAeroLoss = 0.35f, damageForMaxLoss = 8000.0f;
+    float maxDragGain = 0.10f, maxPowerLoss = 0.12f, maxGripLoss = 0.08f;
     // Development multipliers (see specs/development.json): engine output, and
     // how long this team's pit crew takes.
     float torqueScale = 1.0f;
@@ -118,6 +121,7 @@ float compoundWear(int compound);  // wear-rate multiplier
 float wornGrip(float wear);        // grip multiplier from wear (1 when new, cliff past 0.7)
 float axleGrip(const CarState& c, int axle);  // compound x wear, 0 front / 1 rear
 float carMass(const CarParams& p, const CarState& c);  // including fuel
+float damageLevel(const CarParams& p, const CarState& c);  // 0 intact .. 1 at damageForMaxLoss
 
 // One fixed physics step of a planar dynamic bicycle model with load
 // transfer, aero, a simple engine/gearbox and friction-circle tyres.
