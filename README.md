@@ -29,13 +29,15 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   speed profile, runs a pit strategy, overtakes and defends).
 - **`rr_race`**: headless runner with JSON results and per-car CSV telemetry.
   A 5-car, 3-lap race on the 3.2 km circuit takes about one second.
-- **`rr_viewer`**: raylib 3D viewer with sun shadows, fog, procedural
-  textures, kerbs, barriers, pit lane and boxes, scenery, four cameras, a timing
+- **`rr_viewer`**: raylib 3D viewer with low-poly F1 cars in team liveries
+  (steering, rolling wheels), sun shadows, fog, procedural textures, kerbs,
+  barriers, pit lane and boxes, scenery, seven cameras, a timing
   tower (with tyres and pit status), minimap and a per-car panel with fuel and
   tyre wear.
 
 | | |
 |---|---|
+| ![Cinematic camera](docs/images/cinematic.jpg) | ![Helicopter camera](docs/images/helicopter.jpg) |
 | ![Orbit camera](docs/images/orbit.jpg) | ![TV camera](docs/images/tv.jpg) |
 | ![Pit stop: the car is held in its box while the crew works](docs/images/pitstop.jpg) | ![Pit lane: speed limiter on, heading for the box](docs/images/pitlane.jpg) |
 
@@ -72,8 +74,11 @@ ctest --test-dir build          # quick smoke races
 options (noise on the range finders, physics step, robot rate, time limit,
 `--fuel-rate` and `--wear-rate` multipliers).
 
-Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `C` cycles
-chase / TV / orbit / overview cameras, `Space` pauses, `+`/`-` change speed
+Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `L` goes back
+to following the leader (the default), `C` / `Shift+C` cycle the cameras and
+`F2`-`F8` pick one: follow, cinematic (eases between framings around the car),
+TV, helicopter, top down, orbit, overview. The mouse wheel zooms the orbit,
+helicopter and top-down cameras. `Space` pauses, `+`/`-` change speed
 (up to 64x), `N` single-steps while paused, `R` restarts, `P` toggles robot
 paths, `S` shows the focused car's range finders, `H` hides the HUD, `F1` help.
 
@@ -116,6 +121,7 @@ apps/viewer/             rr_viewer (renderer, HUD)
 bots/                    example robots and shared helpers
 tracks/                  circuit.trk, oval.trk
 assets/fonts/            DejaVu fonts for the HUD (see DEJAVU_LICENSE.txt)
+assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see its README)
 ```
 
 ## Current limits and next steps

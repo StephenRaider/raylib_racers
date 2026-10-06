@@ -10,6 +10,7 @@ struct HudState {
     bool paused = false;
     float timeScale = 1.0f;
     int focus = 0;
+    bool followLeader = true;  // keep the camera on whoever is P1
     CamMode camera = CAM_CHASE;
     bool showHud = true;
     bool showHelp = false;

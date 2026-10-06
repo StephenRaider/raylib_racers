@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     SetTargetFPS(shotMode ? 0 : 120);
 
     Renderer renderer;
-    if (!renderer.init(race->track(), (unsigned)cfg.seed, &err)) {
+    if (!renderer.init(race->track(), (unsigned)cfg.seed, paths.assets, &err)) {
         std::fprintf(stderr, "error: %s\n", err.c_str());
         CloseWindow();
         return 1;
@@ -84,22 +84,29 @@ int main(int argc, char** argv) {
     double simDebt = 0;
     int shotFrames = 0;
 
-    if (shotMode) {
+    if (shotMode)
         while (!race->isOver() && race->time() < cfg.screenshotAt) race->step();
-        st.focus = race->order()[0];
+    // --focus N picks a car; without it the camera follows whoever leads.
+    if (cfg.focus >= 0 && cfg.focus < (int)race->cars().size()) {
+        st.focus = cfg.focus;
+        st.followLeader = false;
     }
-    if (cfg.focus >= 0 && cfg.focus < (int)race->cars().size()) st.focus = cfg.focus;
 
     while (!WindowShouldClose()) {
         const float frameDt = std::min(GetFrameTime(), 0.1f);
         const int n = (int)race->cars().size();
 
         // ---- input
-        if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_RIGHT)) st.focus = (st.focus + 1) % n;
-        if (IsKeyPressed(KEY_LEFT)) st.focus = (st.focus + n - 1) % n;
+        const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+        auto pick = [&](int car) { st.focus = car; st.followLeader = false; };
+        if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_RIGHT)) pick((st.focus + 1) % n);
+        if (IsKeyPressed(KEY_LEFT)) pick((st.focus + n - 1) % n);
         for (int k = 0; k < 9 && k < n; ++k)
-            if (IsKeyPressed(KEY_ONE + k)) st.focus = race->order()[k];
-        if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + 1) % CAM_COUNT);
+            if (IsKeyPressed(KEY_ONE + k)) pick(race->order()[k]);
+        if (IsKeyPressed(KEY_L)) st.followLeader = !st.followLeader;
+        if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
+        for (int k = 0; k < CAM_COUNT && k < 7; ++k)
+            if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
         if (IsKeyPressed(KEY_SPACE)) st.paused = !st.paused;
         if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
         if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
@@ -128,6 +135,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (st.followLeader) st.focus = race->order()[0];
         renderer.updateCamera(*race, st.focus, st.camera, shotMode ? 1.0f / 60 : frameDt);
 
         BeginDrawing();

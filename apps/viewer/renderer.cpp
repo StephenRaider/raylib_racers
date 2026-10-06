@@ -225,21 +225,23 @@ Matrix boxTransform(Vector3 center, Vector3 size, float yaw) {
 
 }  // namespace
 
+// One colour per livery, in CarModel's livery order: rosso, blue_pink, papaya, racing_green, midnight,
+// silver_teal, white_navy. Dark liveries use a lighter shade so they read on the HUD.
 Color teamColor(int i) {
-    static const Color c[] = {{220, 40, 40, 255},  {30, 110, 230, 255}, {245, 190, 20, 255}, {30, 170, 90, 255},
-                              {240, 120, 20, 255}, {150, 60, 200, 255}, {20, 190, 200, 255}, {235, 235, 240, 255}};
-    return c[i % 8];
+    static const Color c[] = {{220, 35, 35, 255},  {20, 100, 215, 255}, {255, 128, 0, 255},  {0, 135, 95, 255},
+                              {45, 60, 140, 255},  {0, 205, 185, 255},  {235, 235, 240, 255}};
+    return c[i % 7];
 }
 
 Color teamAccent(int i) {
-    static const Color c[] = {{245, 245, 245, 255}, {250, 210, 40, 255}, {30, 30, 35, 255},  {240, 240, 240, 255},
-                              {30, 30, 35, 255},    {250, 250, 250, 255}, {30, 30, 35, 255}, {200, 30, 30, 255}};
-    return c[i % 8];
+    static const Color c[] = {{245, 245, 245, 255}, {255, 90, 170, 255}, {40, 150, 230, 255}, {200, 245, 0, 255},
+                              {220, 25, 45, 255},   {20, 20, 22, 255},   {10, 40, 110, 255}};
+    return c[i % 7];
 }
 
 // ---------------------------------------------------------------- setup
 
-bool Renderer::init(const rr::Track& track, unsigned seed, std::string* err) {
+bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& assetsDir, std::string* err) {
     rlSetClipPlanes(0.5, 5000.0);
 
     lit_ = LoadShaderFromMemory(kLitVS, kLitFS);
@@ -312,12 +314,18 @@ bool Renderer::init(const rr::Track& track, unsigned seed, std::string* err) {
     mdlCone_ = LoadModelFromMesh(GenMeshCone(1, 1, 10));
     mdlTrunk_ = LoadModelFromMesh(GenMeshCylinder(1, 1, 8));
 
+    std::string carErr;
+    if (assetsDir.empty() || !carModel_.load(assetsDir, &carErr))
+        TraceLog(LOG_WARNING, "F1 car model not loaded (%s); drawing box cars",
+                 assetsDir.empty() ? "no assets folder" : carErr.c_str());
+
     buildTrack(track);
     buildScenery(track, seed);
     return true;
 }
 
 void Renderer::shutdown() {
+    carModel_.unload();
     // Shared textures are owned here, not by the models.
     for (Model* m : {&mdlAsphalt_, &mdlMarkings_, &mdlWalls_, &mdlGround_, &mdlStart_, &mdlCube_, &mdlWheel_,
                      &mdlSphere_, &mdlCone_, &mdlTrunk_}) {
@@ -530,6 +538,66 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
 
 // ---------------------------------------------------------------- camera
 
+const char* camName(CamMode mode) {
+    static const char* names[] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW"};
+    return mode >= 0 && mode < CAM_COUNT ? names[mode] : "?";
+}
+
+namespace {
+
+float smootherstep(float x) {
+    x = std::clamp(x, 0.0f, 1.0f);
+    return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+float wrapPi(float a) {
+    while (a > PI) a -= 2 * PI;
+    while (a < -PI) a += 2 * PI;
+    return a;
+}
+
+}  // namespace
+
+// Cinematic shot n: one of a few classic framings, picked and varied by a hash so a replay looks the same.
+// Azimuth 0 is straight behind the car, PI/2 its left side, PI in front of it.
+static void cineKey(unsigned n, float* az, float* h, float* d, float* fov, float* hold) {
+    auto r = [&](int k) { return hashf((int)n, k, 977); };
+    const float side = (n % 2) ? 1.0f : -1.0f;  // alternate sides so the camera keeps swinging across
+    switch (hash3((int)n, 0, 1031) % 5) {
+        case 0:  // low rear three-quarter
+            *az = side * (0.45f + 0.4f * r(1)); *h = 0.7f + 0.5f * r(2); *d = 6.5f + 2.5f * r(3); *fov = 52; break;
+        case 1:  // tracking alongside
+            *az = side * (1.45f + 0.3f * r(1)); *h = 1.0f + 1.0f * r(2); *d = 8.0f + 4.0f * r(3); *fov = 46; break;
+        case 2:  // low front three-quarter, the car coming at the lens
+            *az = side * (2.3f + 0.45f * r(1)); *h = 0.6f + 0.6f * r(2); *d = 9.0f + 4.0f * r(3); *fov = 44; break;
+        case 3:  // high behind
+            *az = side * 0.3f * r(1); *h = 4.0f + 3.0f * r(2); *d = 12.0f + 4.0f * r(3); *fov = 50; break;
+        default:  // wide and high off to one side
+            *az = side * (1.0f + 1.0f * r(1)); *h = 6.0f + 4.0f * r(2); *d = 18.0f + 7.0f * r(3); *fov = 38; break;
+    }
+    *hold = 5.0f + 4.0f * r(4);
+}
+
+void Renderer::resetCinematic(float clock) {
+    // Walk the shot list up to `clock`, so the shot only depends on race time.
+    cineSeed_ = 0;
+    cineSegStart_ = 0;
+    auto key = [](unsigned n) {
+        CineKey k;
+        cineKey(n, &k.azimuth, &k.height, &k.dist, &k.fov, &k.hold);
+        return k;
+    };
+    cineFrom_ = key(0);
+    cineTo_ = key(1);
+    while (cineSegStart_ + cineFrom_.hold <= clock) {
+        cineSegStart_ += cineFrom_.hold;
+        ++cineSeed_;
+        cineFrom_ = cineTo_;
+        cineTo_ = key(cineSeed_ + 1);
+    }
+    cineClock_ = clock;
+}
+
 void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float dt) {
     const rr::Car& c = race.cars()[focus];
     Vector3 p = W(c.state.pos);
@@ -540,8 +608,15 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
     Vector3 dir = speed > 3 ? Vector3Normalize(Vector3Lerp(fwd, Wdir(rr::normalize(vel)), 0.6f)) : fwd;
     camera.up = {0, 1, 0};
     camera.projection = CAMERA_PERSPECTIVE;
-    if (focus != lastFocus_) chaseInit_ = false;
+    const bool cut = focus != lastFocus_ || mode != lastMode_;
+    if (cut) chaseInit_ = false;
     lastFocus_ = focus;
+    lastMode_ = mode;
+    if (!chaseInit_) smoothDir_ = dir;
+    smoothDir_ = Vector3Normalize(Vector3Lerp(smoothDir_, dir, 1 - std::exp(-dt * 3.0f)));
+
+    // Mouse wheel zooms the cameras that have a distance to play with.
+    const float wheel = GetMouseWheelMove();
 
     switch (mode) {
         case CAM_CHASE: {
@@ -564,6 +639,41 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             camera.fovy = 55.0f + std::min(14.0f, speed * 0.18f);
             break;
         }
+        case CAM_CINEMATIC: {
+            if (!chaseInit_) resetCinematic((float)race.time());
+            cineClock_ += dt;
+            while (cineClock_ >= cineSegStart_ + cineFrom_.hold) {
+                cineSegStart_ += cineFrom_.hold;
+                ++cineSeed_;
+                cineFrom_ = cineTo_;
+                cineKey(cineSeed_ + 1, &cineTo_.azimuth, &cineTo_.height, &cineTo_.dist, &cineTo_.fov, &cineTo_.hold);
+            }
+            // Hold the framing for the first part of each segment, then sweep to the next one.
+            float u = (cineClock_ - cineSegStart_) / cineFrom_.hold;
+            float e = smootherstep((u - 0.4f) / 0.6f);
+            float az = cineFrom_.azimuth + wrapPi(cineTo_.azimuth - cineFrom_.azimuth) * e;
+            float h = cineFrom_.height + (cineTo_.height - cineFrom_.height) * e;
+            float d = cineFrom_.dist + (cineTo_.dist - cineFrom_.dist) * e;
+            float fov = cineFrom_.fov + (cineTo_.fov - cineFrom_.fov) * e;
+            // a slow drift so held framings breathe instead of sitting still
+            az += 0.12f * std::sin(cineClock_ * 0.37f) + 0.05f * std::sin(cineClock_ * 0.93f);
+            h += 0.25f * std::sin(cineClock_ * 0.51f + 1.0f);
+            Vector3 back = Vector3RotateByAxisAngle(Vector3Negate(smoothDir_), {0, 1, 0}, az);
+            Vector3 wantPos = Vector3Add(p, Vector3Add(Vector3Scale(back, d), {0, h, 0}));
+            Vector3 wantTarget = Vector3Add(Vector3Add(p, Vector3Scale(smoothDir_, 1.2f)), {0, 0.55f, 0});
+            if (!chaseInit_) {
+                chasePos_ = wantPos;
+                chaseTarget_ = wantTarget;
+                chaseInit_ = true;
+            }
+            chasePos_ = Vector3Lerp(chasePos_, wantPos, 1 - std::exp(-dt * 8.0f));
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, 1 - std::exp(-dt * 16.0f));
+            chasePos_.y = std::max(chasePos_.y, 0.35f);
+            camera.position = chasePos_;
+            camera.target = chaseTarget_;
+            camera.fovy = fov;
+            break;
+        }
         case CAM_TV: {
             Vector3 best = tvSpots_.empty() ? Vector3Add(p, {20, 8, 20}) : tvSpots_[0];
             float bd = 1e30f;
@@ -577,13 +687,47 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             camera.fovy = std::clamp(2.0f * std::atan(11.0f / dist) * RAD2DEG, 6.0f, 60.0f);
             break;
         }
+        case CAM_HELI: {
+            // Hangs off to one side and behind, high up, drifting slowly round and lagging the car a little.
+            heliDist_ = std::clamp(heliDist_ * (1.0f - wheel * 0.1f), 30.0f, 300.0f);
+            if (!chaseInit_) heliYaw_ = std::atan2(-smoothDir_.z, -smoothDir_.x) + 0.7f;
+            heliYaw_ += dt * 0.035f;
+            Vector3 wantPos = Vector3Add(p, {std::cos(heliYaw_) * heliDist_, heliDist_ * 0.62f, std::sin(heliYaw_) * heliDist_});
+            Vector3 wantTarget = Vector3Add(p, Vector3Scale(dir, std::min(speed, 60.0f) * 0.25f));
+            if (!chaseInit_) {
+                chasePos_ = wantPos;
+                chaseTarget_ = wantTarget;
+                chaseInit_ = true;
+            }
+            chasePos_ = Vector3Lerp(chasePos_, wantPos, 1 - std::exp(-dt * 1.2f));
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, 1 - std::exp(-dt * 5.0f));
+            camera.position = chasePos_;
+            camera.target = chaseTarget_;
+            camera.fovy = 34.0f;
+            break;
+        }
+        case CAM_TOP: {
+            // Straight down with north (the minimap's up) at the top of the screen.
+            topHeight_ = std::clamp(topHeight_ * (1.0f - wheel * 0.1f), 30.0f, 600.0f);
+            Vector3 wantTarget = Vector3Add(p, Vector3Scale(dir, std::min(speed, 60.0f) * 0.3f));
+            if (!chaseInit_) {
+                chaseTarget_ = wantTarget;
+                chaseInit_ = true;
+            }
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, 1 - std::exp(-dt * 4.0f));
+            camera.target = chaseTarget_;
+            camera.position = Vector3Add(chaseTarget_, {0, topHeight_, 0});
+            camera.up = {0, 0, -1};
+            camera.fovy = 45.0f;
+            break;
+        }
         case CAM_ORBIT: {
             if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
                 Vector2 md = GetMouseDelta();
                 orbitYaw_ -= md.x * 0.006f;
                 orbitPitch_ = std::clamp(orbitPitch_ + md.y * 0.006f, 0.05f, 1.45f);
             }
-            orbitDist_ = std::clamp(orbitDist_ * (1.0f - GetMouseWheelMove() * 0.1f), 5.0f, 250.0f);
+            orbitDist_ = std::clamp(orbitDist_ * (1.0f - wheel * 0.1f), 5.0f, 250.0f);
             Vector3 off = {std::cos(orbitPitch_) * std::cos(orbitYaw_), std::sin(orbitPitch_),
                            std::cos(orbitPitch_) * std::sin(orbitYaw_)};
             camera.target = Vector3Add(p, {0, 0.6f, 0});
@@ -614,6 +758,27 @@ void Renderer::drawBox(Vector3 center, Vector3 size, Color color, Matrix parent)
 }
 
 void Renderer::drawCar(const rr::Car& car, int index) {
+    if (!carModel_.loaded()) {
+        drawBoxCar(car, index);
+        return;
+    }
+    const auto& st = car.state;
+    CarModel::Pose pose;
+    pose.world = MatrixMultiply(MatrixRotateY(st.yaw), MatrixTranslate(st.pos.x, 0, -st.pos.y));
+    pose.centreOffset = 0.5f * (car.phys.cgToFront - car.phys.cgToRear);
+    pose.steer = st.steerAngle;
+    // the sim rolls a car.phys.wheelRadius wheel; scale so the model's tyres do not skid
+    pose.wheelRot = st.wheelRot * car.phys.wheelRadius / carModel_.wheelRadius();
+    pose.livery = index;
+    float spec = 0.55f;
+    if (current_ == &lit_) SetShaderValue(lit_, locSpec_, &spec, SHADER_UNIFORM_FLOAT);
+    carModel_.draw(pose, *current_);
+    spec = 0.15f;
+    if (current_ == &lit_) SetShaderValue(lit_, locSpec_, &spec, SHADER_UNIFORM_FLOAT);
+}
+
+// Fallback when the F1 model is missing: a car built from boxes and cylinders.
+void Renderer::drawBoxCar(const rr::Car& car, int index) {
     const auto& st = car.state;
     Matrix M = MatrixMultiply(MatrixRotateY(st.yaw), MatrixTranslate(st.pos.x, 0, -st.pos.y));
     Color body = teamColor(index), accent = teamAccent(index);
@@ -719,7 +884,8 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
 
     // --- shadow pass: an orthographic sun camera centred between the car and the view target
     Vector3 centre = Vector3Lerp(W(fc.state.pos), camera.target, 0.5f);
-    const float orthoSize = 180.0f;
+    // wider sun view for the high cameras, so their whole view has shadows
+    const float orthoSize = std::clamp(camera.position.y * 1.6f, 180.0f, 420.0f);
     const float texel = orthoSize / shadowRes_;
     centre.x = std::floor(centre.x / texel) * texel;
     centre.z = std::floor(centre.z / texel) * texel;
