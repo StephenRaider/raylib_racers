@@ -21,8 +21,12 @@
 //   - blue flags: moves aside and lifts for a car that is lapping it;
 //   - the limit: learns, per 20 m of track, how much grip there really is.
 //   - the weekend: practice learns the limit faster and probes a little past
-//     it; the grip per 20 m, pace, fuel use, tyre wear and pit loss are kept
-//     in the weekend memory for qualifying and the race.
+//     it, and runs a stint on each compound (medium, soft, hard, medium again)
+//     to measure each one's wear, fuel use and pace (a fit that separates the
+//     compounds from the track getting quicker as it learns); the grip per
+//     20 m, pace, fuel use, wear per compound and pit loss are kept in the
+//     weekend memory: qualifying runs the fastest compound, the race plans
+//     with the measured numbers.
 //   - brakes and tyres: cold or faded discs move the braking points, hot
 //     discs bring lift and coast, and the hottest single tyre sets how much
 //     to back off.
@@ -122,6 +126,19 @@ struct RacingLine {
     int memorySize = 0;
     bool haveNotes = false;
     float noteLapRef = 0, noteFuel = 0, noteWear = 0, notePitLoss = 0, noteSpan = 0;
+    // Each compound as measured on clean laps: lap time taken to an empty tank, tyre
+    // wear (worse axle, growth taken out) and fuel per lap. Practice runs every
+    // compound for this; the notes carry it to qualifying and the race.
+    struct CompoundRun { int laps = 0; float time = 0, wear = 0, fuel = 0; };  // sums over laps
+    CompoundRun runs[4];
+    CompoundRun noteRuns[4];         // from the notes (earlier sessions)
+    float lapStartFuel = 0, lapStartWear = 0;
+    struct LapRecord { int lap, compound; float time; };
+    std::vector<LapRecord> lapLog;   // clean laps this session, for the compound pace fit
+    float notePace[4] = {};          // lap time against the medium (fraction), fitted in practice
+    bool notePaceSet = false;
+    // The practice programme: stints on each compound, the stop at the end of each.
+    int progTires[4] = {}, progEnd[4] = {}, progStints = 0, progAt = 0;
 
     // learning the limit: grip multiplier per 20 m bin
     static constexpr float kBin = 20.0f;
@@ -289,9 +306,13 @@ struct Notes {
     float trackLen;
     int sessions;          // sessions that wrote these notes
     float lapRef, fuelPerLap, wearPerLapMed, pitLoss, spanNormal;
+    int runLaps[4];        // per compound (RR_TIRE_*): clean laps measured
+    float runTime[4], runWear[4], runFuel[4];  // per compound: sums over those laps
+    int paceSet;           // pace below fitted in practice
+    float pace[4];         // per compound: lap time against the medium (fraction)
     float adj[1];          // bins entries
 };
-constexpr unsigned kNotesMagic = 0x524c4e31;  // "RLN1"
+constexpr unsigned kNotesMagic = 0x524c4e32;  // "RLN2"
 
 size_t notesSize(int bins) { return sizeof(Notes) + sizeof(float) * (size_t)std::max(0, bins - 1); }
 
@@ -313,6 +334,55 @@ void loadNotes(RacingLine& r) {
     r.noteWear = n.wearPerLapMed;
     r.notePitLoss = n.pitLoss;
     r.noteSpan = n.spanNormal;
+    for (int c = 0; c < 4; ++c)
+        if (n.runLaps[c] > 0 && std::isfinite(n.runTime[c] + n.runWear[c] + n.runFuel[c]))
+            r.noteRuns[c] = {n.runLaps[c], n.runTime[c], n.runWear[c], n.runFuel[c]};
+    r.notePaceSet = n.paceSet != 0;
+    for (int c = 0; c < 4; ++c) r.notePace[c] = std::isfinite(n.pace[c]) ? std::clamp(n.pace[c], -0.08f, 0.08f) : 0.0f;
+}
+
+// The compounds' pace from the practice laps: lap time = base + trend x lap +
+// compound offset (the medium's is 0), least squares. The trend soaks up the
+// track getting quicker as the limits are learnt. Needs every compound and at
+// least six laps; false otherwise.
+bool fitPace(const RacingLine& r, float pace[4]) {
+    int count[4] = {};
+    for (const auto& l : r.lapLog) ++count[l.compound];
+    if (r.lapLog.size() < 6 || count[RR_TIRE_SOFT] < 1 || count[RR_TIRE_MEDIUM] < 2 || count[RR_TIRE_HARD] < 1)
+        return false;
+    // unknowns: base, trend, soft, hard
+    double A[4][5] = {};
+    for (const auto& l : r.lapLog) {
+        const double x[4] = {1.0, (double)l.lap, l.compound == RR_TIRE_SOFT ? 1.0 : 0.0, l.compound == RR_TIRE_HARD ? 1.0 : 0.0};
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) A[i][j] += x[i] * x[j];
+            A[i][4] += x[i] * l.time;
+        }
+    }
+    for (int i = 0; i < 4; ++i) {  // Gaussian elimination with partial pivoting
+        int p = i;
+        for (int k = i + 1; k < 4; ++k)
+            if (std::fabs(A[k][i]) > std::fabs(A[p][i])) p = k;
+        if (std::fabs(A[p][i]) < 1e-9) return false;
+        for (int j = 0; j < 5; ++j) std::swap(A[i][j], A[p][j]);
+        for (int k = 0; k < 4; ++k) {
+            if (k == i) continue;
+            const double f = A[k][i] / A[i][i];
+            for (int j = i; j < 5; ++j) A[k][j] -= f * A[i][j];
+        }
+    }
+    const double base = A[0][4] / A[0][0], trend = A[1][4] / A[1][1];
+    const double ref = base + trend * r.lapLog.back().lap;  // a medium lap as the session ended
+    if (ref <= 1) return false;
+    pace[RR_TIRE_MEDIUM] = 0;
+    pace[RR_TIRE_SOFT] = (float)(A[2][4] / A[2][2] / ref);
+    pace[RR_TIRE_HARD] = (float)(A[3][4] / A[3][3] / ref);
+    return std::isfinite(pace[RR_TIRE_SOFT]) && std::isfinite(pace[RR_TIRE_HARD]);
+}
+
+// What we know of a compound: this session's laps, else the notes'.
+const RacingLine::CompoundRun& knownRun(const RacingLine& r, int c) {
+    return r.runs[c].laps >= 2 || r.runs[c].laps > r.noteRuns[c].laps ? r.runs[c] : r.noteRuns[c];
 }
 
 void saveNotes(const RacingLine& r) {
@@ -331,6 +401,21 @@ void saveNotes(const RacingLine& r) {
     n.wearPerLapMed = r.model.wearPerLapMed;
     n.pitLoss = r.model.pitLoss;
     n.spanNormal = r.spanNormal;
+    for (int c = 0; c < 4; ++c) {
+        const RacingLine::CompoundRun& k = knownRun(r, c);
+        n.runLaps[c] = k.laps;
+        n.runTime[c] = k.time;
+        n.runWear[c] = k.wear;
+        n.runFuel[c] = k.fuel;
+    }
+    float pace[4] = {};
+    if (fitPace(r, pace)) {
+        n.paceSet = 1;
+        for (int c = 0; c < 4; ++c) n.pace[c] = pace[c];
+    } else {
+        n.paceSet = r.notePaceSet;
+        for (int c = 0; c < 4; ++c) n.pace[c] = r.notePace[c];
+    }
     std::memcpy(r.memory, &n, offsetof(Notes, adj));
     std::memcpy(r.memory + offsetof(Notes, adj), r.adj.data(), sizeof(float) * (size_t)bins);
 }
@@ -341,6 +426,16 @@ void sessionEnd(void* self, const RRSessionSummary* summary) {
         std::fprintf(stderr, "car %d session %d over: %d laps, best %.3f; notes saved\n", r->index, summary->session,
                      summary->laps_done, summary->best_lap);
     saveNotes(*r);
+    float pace[4] = {};
+    if (std::getenv("RL_DEBUG") && fitPace(*r, pace))
+        std::fprintf(stderr, "  pace fit: soft %+.2f%%, hard %+.2f%% against the medium\n", pace[1] * 100, pace[3] * 100);
+    if (std::getenv("RL_DEBUG"))
+        for (int c = RR_TIRE_SOFT; c <= RR_TIRE_HARD; ++c) {
+            const RacingLine::CompoundRun& k = knownRun(*r, c);
+            if (k.laps)
+                std::fprintf(stderr, "  compound %d: %d laps, %.3f s (empty tank), wear %.4f/lap, fuel %.2f l/lap\n", c,
+                             k.laps, k.time / k.laps, k.wear / k.laps, k.fuel / k.laps);
+        }
 }
 
 void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const char* params, RRRobotConfig* cfg) {
@@ -389,6 +484,50 @@ float lineTime(const RacingLine& r, float a, float b) {
 
 // Priors before the car has measured itself, the starting tyres and the
 // starting fuel (enough for the planned first stint).
+// Practice: a stint on each compound to measure its wear and pace, then back
+// to the first to compare it on the track as learnt by then. Fuel for each
+// stint goes in at the stop before it.
+void planPractice(RacingLine& r, RRRobotConfig* cfg, int laps) {
+    strat::Model& m = r.model;
+    const int first = cfg->starting_compound_set ? strat::okCompound(cfg->tire_compound) : RR_TIRE_MEDIUM;
+    int order[4] = {first, 0, 0, first};
+    int k = 1;
+    for (int c : {RR_TIRE_SOFT, RR_TIRE_MEDIUM, RR_TIRE_HARD})
+        if (c != first) order[k++] = c;
+    // Later stints are 4 laps (out lap, two timed laps, in lap); the first gets the rest.
+    // With 15 laps or more the first compound comes back at the end, so the fit can
+    // tell the track getting quicker under us (learning it) from the compounds.
+    r.progStints = laps >= 15 ? 4 : 3;
+    for (int i = 0; i < r.progStints; ++i) {
+        r.progTires[i] = order[i];
+        r.progEnd[i] = laps - 4 * (r.progStints - 1 - i);  // the lap each stint stops at the end of
+    }
+    r.progAt = 0;
+    cfg->tire_compound = first;
+    if (!cfg->starting_fuel_set)
+        cfg->initial_fuel = std::min(r.car.fuel_capacity, (r.progEnd[0] + 1.5f) * m.fuelPerLap * 1.05f);
+}
+
+// Practice: box at the end of each stint for the next compound and its fuel.
+void practiceStops(RacingLine& r, const RRSensors* in) {
+    if (r.mode != RACE || r.progAt >= r.progStints - 1 || in->lap < r.progEnd[r.progAt]) return;
+    const float toEntry = r.fwd(in->dist_from_start, r.pit.entry_s);
+    if (toEntry > 400.0f || toEntry < 30.0f) return;
+    strat::Model& m = r.model;
+    ++r.progAt;
+    const int stintLaps = r.progEnd[r.progAt] - in->lap;
+    RRControl o{};
+    o.pit_request = 1;
+    o.pit_tires = r.progTires[r.progAt];
+    o.pit_fuel = std::max(0.0f, (stintLaps + 1.5f) * m.fuelPerLap * 1.05f - in->fuel);
+    o.pit_repair = in->damage > 500;
+    r.order = o;
+    r.mode = PIT_IN;
+    r.lastService = m.serviceTime(o.pit_fuel, true);
+    static const char* names[] = {"", "soft", "medium", "hard"};
+    std::snprintf(r.plan, sizeof r.plan, "practice: %s run", names[strat::okCompound(o.pit_tires)]);
+}
+
 void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
     strat::Model& m = r.model;
     const float wearRate = cfg->wear_rate > 0 ? cfg->wear_rate : 1.0f;
@@ -417,8 +556,28 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
         if (r.noteWear > 0.001f) m.wearPerLapMed = r.noteWear;
         if (r.usePit && r.notePitLoss > 3) m.pitLoss = r.notePitLoss;
         if (r.usePit && r.noteSpan > 1) r.spanNormal = r.noteSpan;
+        // Each compound's wear and pace against the medium, as practice measured them.
+        const RacingLine::CompoundRun& med = r.noteRuns[RR_TIRE_MEDIUM];
+        if (med.laps >= 2 && med.wear > 0) {
+            m.wearPerLapMed = med.wear / med.laps;
+            for (int c : {RR_TIRE_SOFT, RR_TIRE_HARD}) {
+                const RacingLine::CompoundRun& k = r.noteRuns[c];
+                if (k.laps < 2 || k.wear <= 0) continue;
+                m.tyres.wear[c] = std::clamp(k.wear / k.laps / m.wearPerLapMed, 0.25f, 5.0f);
+                if (!r.notePaceSet)
+                    m.tyres.pace[c] = 0.5f * (m.tyres.pace[c] + std::clamp((k.time / k.laps) / (med.time / med.laps) - 1.0f, -0.08f, 0.08f));
+            }
+        }
+        // Measured on fresh tyres over two laps; a race stint runs them hotter and longer,
+        // so the measurement only moves the prior half way.
+        if (r.notePaceSet)
+            for (int c : {RR_TIRE_SOFT, RR_TIRE_HARD}) m.tyres.pace[c] = 0.5f * (m.tyres.pace[c] + r.notePace[c]);
     }
     const int laps = cfg->race_laps > 0 ? cfg->race_laps : 10;
+    if (r.session == RR_SESSION_PRACTICE && r.usePit && laps >= 10) {
+        planPractice(r, cfg, laps);
+        return;
+    }
     const int tires = (int)param(params, "tires", 0.0f);
     int start = tires >= RR_TIRE_SOFT && tires <= RR_TIRE_HARD ? tires : 0;
     if (cfg->starting_compound_set) start = cfg->tire_compound;  // the team's choice: plan around it
@@ -431,6 +590,13 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
         if (pl.valid && (!best.valid || pl.cost < best.cost)) { best = pl; cfg->tire_compound = c; }
     }
     if (start) cfg->tire_compound = start;
+    // Qualifying: the compound practice found fastest over a lap.
+    if (r.session == RR_SESSION_QUALIFYING && !cfg->starting_compound_set && !start) {
+        int fastest = cfg->tire_compound;
+        for (int c = RR_TIRE_SOFT; c <= RR_TIRE_HARD; ++c)
+            if (m.compoundPace(c) < m.compoundPace(fastest) - 1e-4f) fastest = c;
+        cfg->tire_compound = fastest;
+    }
     // Fuel: the first stint (the start lap plus firstStint laps) and a lap spare.
     const float need = (best.valid ? best.firstStint + 2.0f : (float)laps + 1.0f) * m.fuelPerLap * 1.04f;
     if (cfg->starting_fuel_set) return;  // the team chose it
@@ -627,6 +793,20 @@ void learnTiming(RacingLine& r, const RRSensors* in, bool newLap) {
         r.entryTime = -1;
     }
     if (newLap) {
+        // A clean lap: what it says about the compound it was on.
+        const float wearNow = std::max(in->tire_wear[0], in->tire_wear[1]);
+        if (r.cleanLap && in->lap > 2 && in->last_lap_time > 0 && r.lapStartFuel > in->fuel) {
+            auto& k = r.runs[strat::okCompound(in->tire_compound)];
+            const float fuelMid = 0.5f * (r.lapStartFuel + in->fuel);
+            k.laps += 1;
+            k.time += in->last_lap_time - m.fuelSecPerKg * r.car.fuel_density * fuelMid;
+            k.wear += std::max(0.0f, wearNow - r.lapStartWear) / (1 + m.wearGrowth * 0.5f * (wearNow + r.lapStartWear));
+            k.fuel += r.lapStartFuel - in->fuel;
+            r.lapLog.push_back({in->lap - 1, strat::okCompound(in->tire_compound),
+                                in->last_lap_time - m.fuelSecPerKg * r.car.fuel_density * fuelMid});
+        }
+        r.lapStartFuel = in->fuel;
+        r.lapStartWear = wearNow;
         // A clean racing lap updates the reference (taken back to mediums).
         if (r.cleanLap && in->lap > 2 && in->last_lap_time > 0 && in->last_lap_time < in->best_lap_time * 1.04f) {
             const float ref = in->last_lap_time / (1 + m.compoundPace(in->tire_compound));
@@ -953,7 +1133,8 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         }
     }
 
-    strategy(*r, in);
+    if (r->progStints > 0) practiceStops(*r, in);
+    else strategy(*r, in);
     if (r->mode == PIT_OUT && in->pit_state == RR_PIT_NONE && !r->inSpan(s, r->pit.entry_s, r->pit.exit_s)) {
         r->mode = RACE;
         r->plan[0] = 0;
