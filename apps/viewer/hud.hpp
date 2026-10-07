@@ -31,7 +31,8 @@ struct HudState {
     bool showHelp = false;
     bool muted = false;
     // weekend mode
-    bool qualifying = false;      // a qualifying run is on track
+    bool qualifying = false;      // a practice or qualifying run is on track
+    std::string sessionTitle = "QUALIFYING";  // which of the two
     int qualiRun = 0, qualiRuns = 0;
     std::vector<QualiLine> quali; // sorted: timed cars by time, then the rest
     ViewOptions view;

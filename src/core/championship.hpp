@@ -80,7 +80,8 @@ struct Championship {
     float wearRate = 1.0f;
     float distanceKm = 0;     // > 0: each round's laps were set to cover about this distance
     int twoCompounds = -1;    // RaceConfig::twoCompounds
-    bool qualifying = false;  // viewer: a qualifying session sets each grid
+    bool qualifying = false;  // a qualifying session sets each grid
+    int practiceLaps = 0;     // practice before each round, laps per car (0 = none)
     uint64_t seed = 1;
 
     static int pointsFor(int position);  // 1-based; 0 outside the top ten

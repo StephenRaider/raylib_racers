@@ -84,6 +84,13 @@ public:
 
     const RRTrackInfo& info() const { return info_; }
 
+    // The corners, numbered from the start line (see RRTurn).
+    const std::vector<RRTurn>& turns() const { return turns_; }
+    // The turn (index into turns()) at track distance s, -1 on a straight.
+    int turnAt(float s) const { return turns_.empty() ? -1 : turnOf_[indexAt(s)]; }
+    // The next turn starting ahead of s (after the current one), and the distance to its start.
+    int nextTurn(float s, float* ds) const;
+
     // Border polylines (same indexing as samples).
     Vec2 leftEdge(int i) const { const auto& s = at(i); return s.p + s.n * s.halfWidth; }
     Vec2 rightEdge(int i) const { const auto& s = at(i); return s.p - s.n * s.halfWidth; }
@@ -110,6 +117,9 @@ private:
     std::vector<TrackSample> samples_;
     std::vector<RRTrackPoint> apiPoints_;
     RRTrackInfo info_{};
+    std::vector<RRTurn> turns_;
+    std::vector<int> turnOf_;
+    void findTurns();
     std::vector<std::string> warnings_;
 };
 

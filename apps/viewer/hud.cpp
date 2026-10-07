@@ -95,8 +95,8 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         // camera and focus mode, top centre
         char buf[96];
         if (st.qualifying)
-            std::snprintf(buf, sizeof buf, "QUALIFYING  RUN %d / %d   %s CAM   Enter: skip run   Shift+Enter: skip qualifying%s",
-                          st.qualiRun, st.qualiRuns, camName(st.camera), st.muted ? "   SOUND OFF" : "");
+            std::snprintf(buf, sizeof buf, "%s  RUN %d / %d   %s CAM   Enter: skip run   Shift+Enter: skip the rest%s",
+                          st.sessionTitle.c_str(), st.qualiRun, st.qualiRuns, camName(st.camera), st.muted ? "   SOUND OFF" : "");
         else
             std::snprintf(buf, sizeof buf, "%s CAM   %s%s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED",
                           st.muted ? "   SOUND OFF" : "");
@@ -435,7 +435,7 @@ void Hud::drawQualiTower(const rr::Race& race, const HudState& st) {
     const float x = 16, w = 340, rowH = 28;
     const float h = 104 + rowH * st.quali.size() + 8;
     panel({x, 16, w, h});
-    text("QUALIFYING", x + 16, 26, 15, kAccent, true);
+    text(st.sessionTitle.c_str(), x + 16, 26, 15, kAccent, true);
     text(race.track().name().c_str(), x + 16, 46, 19, kText);
     char buf[96];
     std::snprintf(buf, sizeof buf, "RUN %d / %d", st.qualiRun, st.qualiRuns);
@@ -475,8 +475,9 @@ void Hud::drawQualiResults(const HudState& st) {
     const float w = cols * colW + 40, h = 120 + perCol * rowH + 70;
     const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
     panel({x, y, w, h}, 0.9f);
-    text("QUALIFYING", x + 28, y + 22, 18, kAccent, true);
-    text("Starting grid", x + 28, y + 44, 32, kText, true);
+    const bool practice = st.sessionTitle == "PRACTICE";
+    text(st.sessionTitle.c_str(), x + 28, y + 22, 18, kAccent, true);
+    text(practice ? "Best laps" : "Starting grid", x + 28, y + 44, 32, kText, true);
     char buf[96];
     const float pole = n ? st.quali[0].time : 0;
     for (int p = 0; p < n; ++p) {
@@ -491,6 +492,6 @@ void Hud::drawQualiResults(const HudState& st) {
         else std::snprintf(buf, sizeof buf, "+%.3f", q.time - pole);
         textRight(buf, cx + colW - 40, cy + 1, 17, p == 0 ? kAccent : kDim, false, true);
     }
-    const char* go = "Enter: start the race    Esc: back to setup";
+    const char* go = practice ? "Enter: qualifying    Esc: back to setup" : "Enter: start the race    Esc: back to setup";
     text(go, x + (w - width(go, 18, true)) / 2, y + h - 46, 18, kAccent, true);
 }

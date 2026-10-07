@@ -1017,7 +1017,7 @@ int debugPath(void* self, float* xy, int maxPoints) {
     return count;
 }
 
-const RRRobotApi kApi = {RR_ABI_VERSION, RL_NAME, "Raylib Racers examples", create, drive, destroy, debugPath};
+const RRRobotApi kApi = {RR_ABI_VERSION, RL_NAME, "Raylib Racers examples", create, drive, destroy, debugPath, nullptr};
 
 }  // namespace
 

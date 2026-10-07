@@ -8,6 +8,7 @@
 #include <memory>
 #include <set>
 
+#include "weekend.hpp"
 #include "engine_sound.hpp"
 #include "hud.hpp"
 #include "liveries.hpp"
@@ -552,6 +553,7 @@ int main(int argc, char** argv) {
         c.wearRate = menu.champWearRate();
         c.twoCompounds = menu.twoCompoundsArg();
         c.qualifying = menu.champQuali;
+        c.practiceLaps = menu.practiceLaps();
         c.seed = cfg.seed;
         std::error_code ec;
         std::filesystem::create_directories(seasonDir, ec);
@@ -570,8 +572,9 @@ int main(int argc, char** argv) {
         return true;
     };
 
-    // ---- weekend: qualifying runs one car at a time, then the race starts in that order
-    enum class Phase { Race, Quali, QualiDone, Test } phase = Phase::Race;
+    // ---- weekend: practice and qualifying run one car at a time, then the race
+    // starts in qualifying order. Every car keeps one weekend memory throughout.
+    enum class Phase { Race, Practice, PracticeDone, Quali, QualiDone, Test } phase = Phase::Race;
     const rr::Race* lightsFor = nullptr;
     bool wasInMenu = false;
     double menuQuietUntil = 0;  // the race the start lights were shown for
@@ -580,13 +583,11 @@ int main(int argc, char** argv) {
     std::vector<int> weekendSlots, weekendIds;  // each entry's livery and championship driver id
     std::vector<float> qualiTime;
     int qualiCar = 0;
+    int weekendPractice = 0;       // practice laps per car this weekend
+    bool skipRun = false, skipAll = false;  // fast-forwarding the session's runs
     auto qualiConfig = [&](int k) {
-        rr::RaceConfig q = cfg;
-        q.entries = {weekendEntries[k]};
-        q.laps = 3;  // out lap and two flying laps
-        q.fuelLimit = menu.stats().fuelPerLap * 3.6f;
-        q.twoCompounds = 0;  // the tyre rule is for the race only
-        return q;
+        if (phase == Phase::Practice) return rr::practiceConfig(cfg, weekendEntries[k], weekendPractice);
+        return rr::qualiConfig(cfg, weekendEntries[k], menu.stats().fuelPerLap * 3.6f);
     };
     auto refreshQualiLines = [&]() {
         std::vector<int> idx(weekendEntries.size());
@@ -602,7 +603,7 @@ int main(int argc, char** argv) {
             l.name = weekendEntries[i].name;
             l.color = liveryTable().empty() ? teamColor(i) : liveryTable()[weekendSlots[i]].color;
             l.time = qualiTime[i];
-            l.running = phase == Phase::Quali && i == qualiCar;
+            l.running = (phase == Phase::Quali || phase == Phase::Practice) && i == qualiCar;
             st.quali.push_back(l);
         }
         st.qualiRun = qualiCar + 1;
@@ -621,24 +622,38 @@ int main(int argc, char** argv) {
         refreshQualiLines();
         return true;
     };
-    // Ends the current run (simulating whatever is left of it), and with `all` the remaining runs too.
-    auto finishQuali = [&](bool all) {
-        while (!race->isOver()) race->step();
+    // The current run is over: its time, then the next car or the end of the session.
+    auto endRun = [&]() {
         qualiTime[qualiCar] = race->cars()[0].bestLap;
-        while (all && qualiCar + 1 < (int)weekendEntries.size()) {
-            ++qualiCar;
-            auto run = makeRace(qualiConfig(qualiCar), paths);
-            if (!run) break;
-            while (!run->isOver()) run->step();
-            qualiTime[qualiCar] = run->cars()[0].bestLap;
-        }
+        skipRun = false;
         if (qualiCar + 1 < (int)weekendEntries.size()) {
             startQualiRun(qualiCar + 1);
         } else {
-            phase = Phase::QualiDone;
+            skipAll = false;
+            phase = phase == Phase::Practice ? Phase::PracticeDone : Phase::QualiDone;
             st.qualifying = false;
             refreshQualiLines();
         }
+    };
+    auto setSessionTitle = [&]() {
+        st.sessionTitle = phase == Phase::Practice || phase == Phase::PracticeDone ? "PRACTICE" : "QUALIFYING";
+    };
+    auto startQuali = [&]() -> bool {
+        phase = Phase::Quali;
+        setSessionTitle();
+        qualiTime.assign(weekendEntries.size(), 0.0f);
+        return startQualiRun(0);
+    };
+    // Gives each car its weekend memory, then practice (if any) or qualifying.
+    auto beginWeekend = [&](int practiceLaps) -> bool {
+        rr::startWeekend(weekendEntries);
+        weekendPractice = practiceLaps;
+        skipRun = skipAll = false;
+        if (practiceLaps <= 0) return startQuali();
+        phase = Phase::Practice;
+        setSessionTitle();
+        qualiTime.assign(weekendEntries.size(), 0.0f);
+        return startQualiRun(0);
     };
     auto startWeekendRace = [&]() -> bool {
         std::vector<int> order = refreshQualiLines();
@@ -699,9 +714,7 @@ int main(int argc, char** argv) {
                         weekendIds.push_back(id);
                     }
             }
-            qualiTime.assign(weekendEntries.size(), 0.0f);
-            phase = Phase::Quali;
-            return startQualiRun(0);
+            return beginWeekend(season.practiceLaps);
         }
         raceIds = grid;
         phase = Phase::Race;
@@ -804,6 +817,7 @@ int main(int argc, char** argv) {
         t.ambient = su.ambient;
         t.twoCompounds = 0;
         t.pitsClosed = true;
+        t.session = RR_SESSION_TEST;
         t.fuelLimit = 0;
         t.entries = {testEntry(su)};
         return t;
@@ -1093,15 +1107,13 @@ int main(int argc, char** argv) {
                 inMenu = false;
                 st.paused = false;
                 if (menu.weekend() && !quit) {
-                    phase = Phase::Quali;
                     weekendEntries = cfg.entries;
                     // the grid's liveries, in entry order (a season round fills these in startRound)
                     const int n = (int)weekendEntries.size();
                     weekendSlots.assign(menu.carLivery.begin(), menu.carLivery.begin() + n);
                     weekendIds.resize(n);
                     for (int i = 0; i < n; ++i) weekendIds[i] = i;
-                    qualiTime.assign(weekendEntries.size(), 0.0f);
-                    if (!startQualiRun(0)) quit = true;
+                    if (!beginWeekend(menu.practiceLaps())) quit = true;
                 }
             }
             renderer->updateCamera(*race, race->order()[0], CAM_CINEMATIC, frameDt);
@@ -1283,7 +1295,11 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
             if (IsKeyPressed(KEY_F1)) st.showHelp = !st.showHelp;
             const bool enter = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
-            if (phase == Phase::Quali && enter) finishQuali(shift);
+            if ((phase == Phase::Quali || phase == Phase::Practice) && enter) {
+                skipRun = true;
+                skipAll = skipAll || shift;
+            }
+            else if (phase == Phase::PracticeDone && enter && !startQuali()) quit = true;
             else if (phase == Phase::QualiDone && enter && !startWeekendRace()) quit = true;
             else if (inSeason && phase == Phase::Race && enter && race->isOver()) {
                 inMenu = true;  // the season page, with the new standings
@@ -1321,6 +1337,12 @@ int main(int argc, char** argv) {
                     st.lights -= frameDt;  // "GO" shows for a moment while the cars pull away
                 }
                 if (st.lights > 0) {
+                } else if ((skipRun || skipAll) && (phase == Phase::Quali || phase == Phase::Practice)) {
+                    // fast-forward: as much of the run as fits in a few milliseconds a frame
+                    const double until = GetTime() + 0.03;
+                    while (!race->isOver() && GetTime() < until)
+                        for (int k = 0; k < 200 && !race->isOver(); ++k) race->step();
+                    simDebt = 0;
                 } else if (!st.paused) {
                     simDebt += frameDt * st.timeScale;
                     long long steps = (long long)(simDebt / race->dt());
@@ -1331,7 +1353,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (phase == Phase::Quali && race->isOver()) finishQuali(false);
+            if ((phase == Phase::Quali || phase == Phase::Practice) && race->isOver()) endRun();
             // The race log: results, lap times and positions, and every pit stop
             // with the algorithm's reason, saved once when the race ends.
             if (phase == Phase::Race && race->isOver() && loggedRace != race.get() && !shotMode) {
@@ -1403,7 +1425,7 @@ int main(int argc, char** argv) {
         ClearBackground(BLACK);
         renderer->draw(*race, inMenu ? race->order()[0] : st.focus, st.view);
         if (inMenu) hud->drawMenu(menu, menuHits);
-        else if (phase == Phase::QualiDone) hud->drawQualiResults(st);
+        else if (phase == Phase::QualiDone || phase == Phase::PracticeDone) hud->drawQualiResults(st);
         else if (testing) hud->drawTest(*race, st, tv, testHits);
         else hud->draw(*race, st);
         if (shotMode && ++shotFrames == 3) {

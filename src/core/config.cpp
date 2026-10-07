@@ -46,6 +46,10 @@ std::string usage(const char* prog, bool viewer) {
         "  --quiet                print only the results\n"
         "  --cool-down            after the flag, run on until the cars have parked in the pit lane\n";
     if (!viewer) {
+        u += "Weekend (each car practises and qualifies alone; robots keep a weekend memory, ABI 8)\n"
+             "  --practice [LAPS]      practice before the race, up to LAPS laps per car (default 15)\n"
+             "  --qualifying           qualifying sets the grid (an out lap and two flying laps per car)\n"
+             "                         (with --championship: only when starting a new season)\n";
         u += "Championship\n"
              "  --championship FILE    race the next round of the season saved in FILE, then save it;\n"
              "                         a new FILE starts a season with --lineup or the --car entries\n"
@@ -110,6 +114,12 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
                 cfg.entries.back().fuel = v;
             }
             else if (a == "--no-pits") cfg.pitsClosed = true;
+            else if (!viewer && a == "--practice") {
+                cfg.practiceLaps = 15;
+                if (i + 1 < argc && argv[i + 1][0] != '-') cfg.practiceLaps = std::stoi(argv[++i]);
+                if (cfg.practiceLaps < 1) throw std::runtime_error("--practice takes a lap count of 1 or more");
+            }
+            else if (!viewer && a == "--qualifying") cfg.qualifying = true;
             else if (a == "--test-log") cfg.testLog = need(i, a);
             else if (a == "--two-compounds") {
                 std::string v = need(i, a);

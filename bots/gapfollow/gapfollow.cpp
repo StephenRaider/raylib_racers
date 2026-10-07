@@ -133,7 +133,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
 
 void destroy(void* self) { delete static_cast<GapFollow*>(self); }
 
-const RRRobotApi kApi = {RR_ABI_VERSION, "gapfollow", "Raylib Racers examples", create, drive, destroy, nullptr};
+const RRRobotApi kApi = {RR_ABI_VERSION, "gapfollow", "Raylib Racers examples", create, drive, destroy, nullptr, nullptr};
 
 }  // namespace
 

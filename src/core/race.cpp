@@ -65,8 +65,29 @@ std::string jsonEscape(const std::string& s) {
 std::string trackFile(const std::string& name, const std::vector<std::string>& dirs) { return findTrack(name, dirs); }
 
 
+// Tells the robot its session is over (once), with how it went.
+void Race::endSession(Car& c) {
+    if (c.sessionEnded || !c.robot || !c.module) return;
+    c.sessionEnded = true;
+    const RRRobotApi* api = c.module->api();
+    if (api->abi_version < 8 || !api->session_end) return;  // older robots' RRRobotApi ends before it
+    RRSessionSummary s{};
+    s.session = cfg_.session;
+    s.laps_done = c.lapsDone;
+    s.best_lap = c.bestLap;
+    s.total_time = (float)time_;
+    s.finished = c.finished;
+    for (size_t i = 0; i < c.lapTimes.size() && i < 64; ++i) s.lap_times[i] = c.lapTimes[i];
+    s.tire_compound = c.state.compound;
+    s.tire_wear[0] = c.state.tireWear[0];
+    s.tire_wear[1] = c.state.tireWear[1];
+    s.fuel = c.state.fuel;
+    api->session_end(c.robot, &s);
+}
+
 Race::~Race() {
     for (auto& c : cars_) {
+        endSession(c);
         if (c.robot && c.module && c.module->api()->destroy) c.module->api()->destroy(c.robot);
         if (c.telemetry) std::fclose(c.telemetry);
     }
@@ -145,6 +166,12 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         c.robotCfg.pits_closed = cfg.pitsClosed;
         c.robotCfg.starting_fuel_set = e.fuel > 0;
         if (e.fuel > 0) c.robotCfg.initial_fuel = std::min(e.fuel, c.phys.fuelCapacity);
+        c.robotCfg.session = cfg.session;
+        c.robotCfg.session_laps = cfg.laps;
+        c.memory = e.memory ? e.memory : newWeekendMemory();
+        if ((int)c.memory->size() < RR_SESSION_MEMORY) c.memory->resize(RR_SESSION_MEMORY, 0);
+        c.robotCfg.memory = c.memory->data();
+        c.robotCfg.memory_size = RR_SESSION_MEMORY;
         RRCarSpec spec = c.phys.spec();
         c.robot = api->create(&track_.info(), &spec, (int)i, c.params.c_str(), &c.robotCfg);
         if (!c.robot) {
@@ -307,6 +334,15 @@ void Race::computeSensors(Car& c) {
     s.compounds_used = c.compoundsUsed;
     s.starting_compound_set = c.startTiresSet;
     s.pits_closed = cfg_.pitsClosed;
+    s.session = cfg_.session;
+    {
+        const int t = track_.turnAt(c.trackS);
+        float ds = 0;
+        const int nx = track_.nextTurn(c.trackS, &ds);
+        s.turn = t >= 0 ? track_.turns()[t].id : 0;
+        s.next_turn = nx >= 0 ? track_.turns()[nx].id : 0;
+        s.next_turn_ds = nx >= 0 ? ds : 0;
+    }
 
     s.speed_x = st.vx;
     s.speed_y = st.vy;
@@ -955,6 +991,7 @@ void Race::step() {
     if (allDone || timeout || time_ >= maxTime_) {
         over_ = true;
         overTime_ = time_;
+        for (Car& c : cars_) endSession(c);
         for (Car& c : cars_)
             if (!c.finished && !c.dnf && time_ >= maxTime_) c.dnfReason = "time limit";
         for (Car& c : cars_)

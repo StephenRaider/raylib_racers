@@ -85,6 +85,6 @@ static void drive(void* self, const RRSensors* in, RRControl* out) {
 
 static void destroy(void* self) { free(self); }
 
-static const RRRobotApi api = {RR_ABI_VERSION, "simple", "Raylib Racers examples", create, drive, destroy, NULL};
+static const RRRobotApi api = {RR_ABI_VERSION, "simple", "Raylib Racers examples", create, drive, destroy, NULL, NULL};
 
 RR_EXPORT const RRRobotApi* rr_robot_entry(void) { return &api; }

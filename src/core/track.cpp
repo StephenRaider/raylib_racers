@@ -203,7 +203,94 @@ void Track::finalize() {
         if (p.speed_limit <= 0) p.speed_limit = 22.0f;
         if (runoff_ > kPitBarrier) warnings_.push_back("runoff is wider than the pit area; the pit barrier will stick out");
     }
+    findTurns();
     buildEdgeGrid();
+}
+
+// Corners: stretches tighter than a 300 m radius (curvature smoothed over
+// 20 m), same-direction stretches less than 30 m apart joined, anything
+// turning less than 15 degrees dropped. A chicane is two turns.
+void Track::findTurns() {
+    const int n = size();
+    turns_.clear();
+    turnOf_.assign(n, -1);
+    if (n < 10) return;
+    const int half = std::max(1, (int)std::lround(10.0f / ds_));
+    std::vector<float> k(n);
+    for (int i = 0; i < n; ++i) {
+        float sum = 0;
+        for (int j = -half; j <= half; ++j) sum += at(i + j).curvature;
+        k[i] = sum / (2 * half + 1);
+    }
+    const float kMin = 1.0f / 300.0f;
+    auto dirOf = [&](int i) { return k[i] > kMin ? 1 : (k[i] < -kMin ? -1 : 0); };
+    // start on a straight so no corner is split by the scan's start
+    int i0 = 0;
+    for (int i = 0; i < n; ++i)
+        if (std::fabs(k[i]) < std::fabs(k[i0])) i0 = i;
+    struct Run { int a, b, dir; };  // sample offsets from i0, b exclusive
+    std::vector<Run> runs;
+    for (int o = 0; o < n;) {
+        const int d = dirOf((i0 + o) % n);
+        if (!d) { ++o; continue; }
+        int e = o;
+        while (e < n && dirOf((i0 + e) % n) == d) ++e;
+        const int gap = (int)std::lround(30.0f / ds_);
+        if (!runs.empty() && runs.back().dir == d && o - runs.back().b < gap) runs.back().b = e;
+        else runs.push_back({o, e, d});
+        o = e;
+    }
+    for (const Run& r : runs) {
+        float angle = 0, kMax = 0;
+        int apex = r.a;
+        for (int o = r.a; o < r.b; ++o) {
+            const float kk = std::fabs(k[(i0 + o) % n]);
+            angle += kk * ds_;
+            if (kk > kMax) { kMax = kk; apex = o; }
+        }
+        if (angle < 15.0f * kPi / 180.0f) continue;
+        RRTurn t{};
+        t.direction = r.dir;
+        t.start_s = at(i0 + r.a).s;
+        t.end_s = at(i0 + r.b - 1).s;
+        t.apex_s = at(i0 + apex).s;
+        t.min_radius = 1.0f / std::max(kMax, 1e-4f);
+        t.angle = angle;
+        turns_.push_back(t);
+        for (int o = r.a; o < r.b; ++o) turnOf_[(i0 + o) % n] = -2 - (int)turns_.size() + 1;  // fixed below
+    }
+    // number them in race order from the start line
+    std::vector<int> order(turns_.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return turns_[a].start_s < turns_[b].start_s; });
+    std::vector<int> rank(order.size());
+    std::vector<RRTurn> sorted;
+    for (size_t r = 0; r < order.size(); ++r) {
+        rank[order[r]] = (int)r;
+        sorted.push_back(turns_[order[r]]);
+        sorted.back().id = (int)r + 1;
+    }
+    for (int& v : turnOf_)
+        if (v <= -2) v = rank[-2 - v];
+    turns_ = sorted;
+    info_.num_turns = (int)turns_.size();
+    info_.turns = turns_.data();
+}
+
+int Track::nextTurn(float s, float* ds) const {
+    if (turns_.empty()) return -1;
+    const int cur = turnAt(s);
+    auto fwd = [&](float a, float b) { float d = std::fmod(b - a, length_); return d < 0 ? d + length_ : d; };
+    int best = -1;
+    float bestD = 1e30f;
+    for (int i = 0; i < (int)turns_.size(); ++i) {
+        if (i == cur) continue;
+        const float d = fwd(s, turns_[i].start_s);
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) { best = cur; bestD = fwd(s, turns_[cur].start_s); }
+    if (ds) *ds = bestD;
+    return best;
 }
 
 bool Track::inSpan(float s, float a, float b) const {
