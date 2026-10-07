@@ -129,7 +129,7 @@ Lineup Lineup::fromEntries(const std::vector<EntrySpec>& entries, int perTeam) {
             l.teams.back().stats = entries[i].dev;
         }
         const EntrySpec& e = entries[i];
-        l.teams.back().drivers.push_back({e.name.empty() ? e.robot : e.name, e.robot, e.params, e.tires});
+        l.teams.back().drivers.push_back({e.name.empty() ? e.robot : e.name, e.robot, e.params, e.tires, -1});
     }
     return l;
 }
@@ -145,7 +145,8 @@ std::string Lineup::toJson(int indent) const {
         for (size_t d = 0; d < t.drivers.size(); ++d) {
             const LineupDriver& v = t.drivers[d];
             s += (d ? ",\n" : "\n") + p + "      {\"name\": " + q(v.name) + ", \"robot\": " + q(v.robot) +
-                 ", \"params\": " + q(v.params) + ", \"tires\": " + std::to_string(v.tires) + "}";
+                 ", \"params\": " + q(v.params) + ", \"tires\": " + std::to_string(v.tires) +
+                 ", \"livery\": " + std::to_string(v.livery) + "}";
         }
         s += "]}";
     }
@@ -171,6 +172,7 @@ static bool lineupFrom(const mjson::Value& v, Lineup& l, std::string* err) {
             d.robot = dv["robot"].str();
             d.params = dv["params"].str();
             d.tires = (int)dv["tires"].num(0);
+            d.livery = (int)dv["livery"].num(-1);
             if (d.robot.empty()) {
                 if (err) *err = "a driver of team \"" + t.name + "\" has no robot";
                 return false;
@@ -209,6 +211,10 @@ bool Lineup::load(const std::string& path, Lineup& out, std::string* err) {
 int Championship::pointsFor(int position) {
     static const int kPoints[] = {25, 18, 15, 12, 10, 8, 6, 4, 2, 1};
     return position >= 1 && position <= 10 ? kPoints[position - 1] : 0;
+}
+
+int Championship::lapsFor(float km, float trackLength) {
+    return std::max(1, (int)std::lround(km * 1000.0f / std::max(1.0f, trackLength)));
 }
 
 std::vector<ChampRound> Championship::defaultCalendar(int laps) {
@@ -355,9 +361,9 @@ bool Championship::save(const std::string& path, std::string* err) const {
     std::string s = "{\n  \"format\": 1,\n  \"name\": " + q(name) + ",\n";
     char buf[256];
     std::snprintf(buf, sizeof buf,
-                  "  \"tyre_life\": %d,\n  \"wear_rate\": %.4f,\n  \"two_compounds\": %d,\n  \"qualifying\": %s,\n"
+                  "  \"distance_km\": %.1f,\n  \"wear_rate\": %.4f,\n  \"two_compounds\": %d,\n  \"qualifying\": %s,\n"
                   "  \"seed\": %llu,\n",
-                  tyreLife, wearRate, twoCompounds, qualifying ? "true" : "false", (unsigned long long)seed);
+                  distanceKm, wearRate, twoCompounds, qualifying ? "true" : "false", (unsigned long long)seed);
     s += buf;
     s += "  \"lineup\": " + lineup.toJson(2) + ",\n  \"rounds\": [";
     for (size_t k = 0; k < rounds.size(); ++k)
@@ -397,7 +403,7 @@ bool Championship::load(const std::string& path, Championship& out, std::string*
     }
     Championship c;
     c.name = v["name"].str();
-    c.tyreLife = (int)v["tyre_life"].num(0);
+    c.distanceKm = (float)v["distance_km"].num(0);
     c.wearRate = (float)v["wear_rate"].num(1);
     c.twoCompounds = (int)v["two_compounds"].num(-1);
     c.qualifying = v["qualifying"].b;

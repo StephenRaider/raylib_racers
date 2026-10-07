@@ -37,6 +37,18 @@ static int runChampionship(const rr::RaceConfig& cfg, const std::vector<std::str
             std::fprintf(stderr, "error: --rounds: %s\n", err.c_str());
             return 2;
         }
+        if (cfg.distance > 0) {
+            ch.distanceKm = cfg.distance;
+            for (rr::ChampRound& r : ch.rounds) {
+                rr::Track t;
+                const std::string path = rr::trackFile(r.track, tracks);
+                if (path.empty() || !t.load(path, &err)) {
+                    std::fprintf(stderr, "error: track '%s': %s\n", r.track.c_str(), path.empty() ? "not found" : err.c_str());
+                    return 1;
+                }
+                r.laps = rr::Championship::lapsFor(cfg.distance, t.length());
+            }
+        }
         ch.wearRate = cfg.wearRate;
         ch.twoCompounds = cfg.twoCompounds;
         ch.seed = cfg.seed;

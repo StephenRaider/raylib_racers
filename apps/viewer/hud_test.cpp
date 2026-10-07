@@ -898,11 +898,19 @@ void Hud::drawTestStatsPage(const MenuState& m, std::vector<MenuHit>& hits) {
         const int v = k < (int)m.testStats.size() ? m.testStats[k] : r.neutral;
         text(r.labels[k].c_str(), lx, ry + 4, 18, sel ? kText : kDim, true);
         const float vx = lx + 240;
-        text("<", vx, ry + 2, 22, sel ? kAccent : kDim, true);
+        // minus and plus buttons
+        for (int side = 0; side < 2; ++side) {
+            const Rectangle b = {side ? vx + 54 : vx - 6, ry - 2, 30, 30};
+            const bool hot = CheckCollisionPointRec(GetMousePosition(), b);
+            DrawRectangleRounded(b, 0.35f, 6, hot ? Color{44, 50, 66, 255} : Color{30, 34, 46, 255});
+            const float cx = b.x + 15, cy = b.y + 15;
+            const Color ic = hot || sel ? kText : kDim;
+            DrawRectangle((int)cx - 6, (int)cy - 1, 12, 2, ic);
+            if (side) DrawRectangle((int)cx - 1, (int)cy - 6, 2, 12, ic);
+        }
         std::snprintf(buf, sizeof buf, "%d", v);
         const Color vc = v > r.neutral ? kGood : v < r.neutral ? kBad : kText;
         text(buf, vx + 36 - width(buf, 20, true) / 2, ry + 3, 20, vc, true);
-        text(">", vx + 62, ry + 2, 22, sel ? kAccent : kDim, true);
         const float bx = vx + 96, bw = lw - (bx - lx) - 20;
         DrawRectangle((int)bx, (int)ry + 12, (int)bw, 6, Fade(WHITE, 0.12f));
         DrawRectangle((int)bx, (int)ry + 12, (int)(bw * v / std::max(1, r.max)), 6, vc);

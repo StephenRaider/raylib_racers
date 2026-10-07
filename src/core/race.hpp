@@ -188,4 +188,7 @@ private:
     std::mt19937_64 rng_;
 };
 
+// Path of a track by name (tracks/<name>.trk) or path, "" if not found.
+std::string trackFile(const std::string& name, const std::vector<std::string>& dirs);
+
 }  // namespace rr

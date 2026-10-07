@@ -100,7 +100,7 @@ if(RR_BUILD_VIEWER)
     apps/viewer/engine_sound.cpp
     apps/viewer/race_audio.cpp
     apps/viewer/menu.cpp
-    apps/viewer/hud_test.cpp apps/viewer/hud_results.cpp
+    apps/viewer/hud_test.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp
     apps/viewer/test_figures.cpp
     apps/viewer/liveries.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
@@ -138,7 +138,8 @@ if(RR_BUILD_BOTS)
   # standings; the second run picks up where the first stopped.
   add_test(NAME champ_lineup COMMAND rr_race --save-lineup ${CMAKE_BINARY_DIR}/ctest_lineup.json
            --car racingline --dev "top_speed=7,brakes=3" --car dave --car spongebob --car granny)
-  add_test(NAME champ_clean COMMAND ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/ctest_season.json)
+  add_test(NAME champ_clean COMMAND ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/ctest_season.json
+           ${CMAKE_BINARY_DIR}/ctest_season_km.json)
   add_test(NAME champ_round1 COMMAND rr_race --championship ${CMAKE_BINARY_DIR}/ctest_season.json
            --lineup ${CMAKE_BINARY_DIR}/ctest_lineup.json --rounds oval:1,circuit:1)
   add_test(NAME champ_round2 COMMAND rr_race --championship ${CMAKE_BINARY_DIR}/ctest_season.json)
@@ -146,6 +147,10 @@ if(RR_BUILD_BOTS)
                        PASS_REGULAR_EXPRESSION "after round 1 of 2")
   set_tests_properties(champ_round2 PROPERTIES DEPENDS champ_round1
                        PASS_REGULAR_EXPRESSION "after round 2 of 2")
+  # --distance: each round's laps cover about that distance (oval 2.1 km: 3 laps)
+  add_test(NAME champ_distance COMMAND rr_race --championship ${CMAKE_BINARY_DIR}/ctest_season_km.json
+           --car racingline --car dave --rounds oval,circuit --distance 6.4)
+  set_tests_properties(champ_distance PROPERTIES DEPENDS champ_clean RESOURCE_LOCK season PASS_REGULAR_EXPRESSION "Round 1 of 2: [^\n]*, 3 laps")
   set_tests_properties(champ_lineup champ_clean champ_round1 champ_round2 PROPERTIES RESOURCE_LOCK season)
 endif()
 

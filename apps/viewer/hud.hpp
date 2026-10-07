@@ -35,6 +35,7 @@ struct HudState {
     std::vector<QualiLine> quali; // sorted: timed cars by time, then the rest
     ViewOptions view;
     std::string logPath;          // where the finished race's log was saved
+    std::string notice;           // a line shown over the race-end screen (championship rounds)
     // Testing replays: what the car panel shows instead of the live clock (< 0 = live).
     float lapClock = -1, lastLap = -1, bestLap = -1;
     // Race-end screen: which window, and whether it is shown at all (G).
@@ -120,6 +121,26 @@ private:
     // session graphs over all laps
     void sessionGraph(const TestView& tv, Rectangle box, int which, bool big);
     void drawHelp();
+    // the setup menu (hud_menu.cpp): widgets, then the pages
+    void card(Rectangle r, const char* title, const char* sub = nullptr);
+    void button(Rectangle r, const char* label, int style, bool focus, int row, std::vector<MenuHit>& hits,
+                int value = -1);  // style 0 primary, 1 secondary, 2 quiet
+    void stepper(Rectangle r, const char* value, bool focus, int row, std::vector<MenuHit>& hits);
+    void segmented(Rectangle r, const std::vector<const char*>& options, int sel, bool focus, int row,
+                   std::vector<MenuHit>& hits);
+    void dropdown(Rectangle r, const char* value, bool focus, int row, std::vector<MenuHit>& hits, Color chip = BLANK);
+    void field(float x, float y, float w, const char* label, const char* note, bool focus);
+    void trackShape(const std::vector<rr::Vec2>& pts, Rectangle box, Color c, float thick);
+    void drawTopBar(const MenuState& m, std::vector<MenuHit>& hits, float& top);
+    void drawRaceSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangle area);
+    void drawChampSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangle area);
+    void drawTestSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangle area);
+    void drawTrackCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle r);
+    void drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle r, bool teamList);
+    void drawSeasonPage(const MenuState& m, std::vector<MenuHit>& hits);
+    void drawPopup(const MenuState& m, std::vector<MenuHit>& hits);
+    void drawNameBox(const MenuState& m, std::vector<MenuHit>& hits);
+    void drawLineupList(const MenuState& m, std::vector<MenuHit>& hits);
     void drawTeamsPage(const MenuState& m, std::vector<MenuHit>& hits);
     void drawGridPage(const MenuState& m, std::vector<MenuHit>& hits);
     void drawTestStatsPage(const MenuState& m, std::vector<MenuHit>& hits);
