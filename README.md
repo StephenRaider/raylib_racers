@@ -121,16 +121,17 @@ selected stat changes highlighted.
 On track, the testing screen shows the session (every lap with its gap to
 the best, fuel and tyre wear, and the delta to the best lap as you drive),
 the car panel, a **dashboard** of eight graphs (speed, throttle and brake,
-grip use, delta to the best lap, lap times, fuel with its average per lap and
+grip use, tyre temperatures against the compound's window, lap times, fuel with its average per lap and
 where it runs dry, tyre wear with its average per lap and the lap it reaches
-the cliff, and a track map coloured by speed) and a **timeline** of the run
+the cliff, and a track map coloured by speed with the live delta to the best
+lap on top) and a **timeline** of the run
 with each lap and every flagged moment (off track, contact, oversteer,
 understeer, wheelspin, spin, stopped). Click a graph, or press `Tab`, for a
-full window: **Driving** (speed and gear, pedals, steering, grip use and delta
-along the lap, against the best lap or any lap with `[` `]`), **Session**
+full window: **Driving** (speed and gear, pedals, steering, grip use and tyre
+temperatures along the lap, against the best lap or any lap with `[` `]`), **Session**
 (lap times, sector times, fuel, tyre wear, tyre temperatures over the run) and
 **Track and events** (the lap on the map coloured by speed, pedals or grip
-use with `M`, the list of events and a lap table).
+use with `M` and the live delta to the best lap, the list of events and a lap table).
 
 Scrubbing: pause with `Space` and drag the timeline or use `Left`/`Right`
 (1 s, `Shift` 10 s, `Ctrl` one sample), `PgUp`/`PgDn` (the same spot a lap

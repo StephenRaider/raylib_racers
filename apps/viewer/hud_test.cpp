@@ -266,35 +266,32 @@ void Hud::distGraph(const TestView& tv, Rectangle box, int which, int lap, int r
             plotSeries(p, c, kRear, 1.6f);
             break;
         }
-        default: {  // delta to the reference lap
-            std::vector<Vector2> dl;
-            float lo = -0.5f, hi = 0.5f;
-            for (int i = f; i < e && re > rf; ++i) {
-                bool ok = false;
-                const float tr = timeAtDist(rec, rf, re, S[i].lapDist, &ok);
-                if (!ok) continue;
-                const float dv = S[i].lapTime - tr;
-                dl.push_back({S[i].lapDist, dv});
-                lo = std::min(lo, dv);
-                hi = std::max(hi, dv);
-            }
-            lo = std::max(lo, -5.0f);
-            hi = std::min(hi, 5.0f);
-            const float m = std::max(std::fabs(lo), std::fabs(hi)) * 1.1f;
-            float now = 0;
-            bool has = false;
-            if (ci >= 0 && re > rf) now = S[ci].lapTime - timeAtDist(rec, rf, re, S[ci].lapDist, &has);
-            if (re <= rf) std::snprintf(title, sizeof title, "Delta: no lap to compare yet");
-            else if (has) std::snprintf(title, sizeof title, "Delta to lap %d   %+.3f s", ref, now);
-            else std::snprintf(title, sizeof title, "Delta to lap %d", ref);
-            p = plotFrame(box, title, x0, L, -m, m, "%+.2f", 2, false);
-            // green where faster than the reference, red where slower
-            BeginScissorMode((int)p.r.x, (int)p.r.y, (int)p.r.width, (int)p.r.height);
-            for (size_t i = 1; i < dl.size(); ++i) {
-                const Vector2 q0 = p.at(dl[i - 1].x, dl[i - 1].y), q1 = p.at(dl[i].x, dl[i].y);
-                DrawLineEx(q0, q1, 2, dl[i].y <= 0 ? kGood : kBad);
-            }
-            EndScissorMode();
+        default: {  // tyre temperatures, with the compound's working window shaded
+            std::snprintf(title, sizeof title, "Tyre temperature");
+            if (ci >= 0)
+                std::snprintf(title, sizeof title, "Tyre temp  front %.0f C  rear %.0f C", S[ci].s.tireTemp[0], S[ci].s.tireTemp[1]);
+            float lo = 1e9f, hi = -1e9f;
+            for (int i = f; i < e; ++i)
+                for (int k = 0; k < 2; ++k) {
+                    lo = std::min(lo, S[i].s.tireTemp[k]);
+                    hi = std::max(hi, S[i].s.tireTemp[k]);
+                }
+            const int comp = e > f ? S[f].s.compound : 0;
+            const rr::Compound& win = rr::compoundInfo(comp);
+            lo = std::floor((std::min(lo, win.tempLo) - 5) / 10) * 10;
+            hi = std::ceil((std::max(hi, win.tempHi) + 5) / 10) * 10;
+            if (e <= f) lo = 60, hi = 140;
+            p = plotFrame(box, title, x0, L, lo, hi, "%.0f", big ? 4 : 2, false);
+            const Vector2 w0 = p.at(x0, win.tempHi), w1 = p.at(x0, win.tempLo);
+            DrawRectangleRec({p.r.x, w0.y, p.r.width, w1.y - w0.y}, Fade(kGood, 0.16f));
+            series(rf, re, b, [](const rr::TestSample& s) { return s.s.tireTemp[0]; });
+            series(rf, re, d, [](const rr::TestSample& s) { return s.s.tireTemp[1]; });
+            plotSeries(p, b, Fade(kFront, 0.3f), 1.2f);
+            plotSeries(p, d, Fade(kRear, 0.3f), 1.2f);
+            series(f, e, a, [](const rr::TestSample& s) { return s.s.tireTemp[0]; });
+            series(f, e, c, [](const rr::TestSample& s) { return s.s.tireTemp[1]; });
+            plotSeries(p, a, kFront, 1.8f);
+            plotSeries(p, c, kRear, 1.8f);
             break;
         }
     }
@@ -491,6 +488,31 @@ void Hud::drawTrackMap(const TestView& tv, Rectangle box, int lap, bool big) {
         const Vector2 q = P(cur.s.pos);
         DrawCircleV(q, big ? 7 : 5, kText);
         DrawCircleV(q, big ? 4.5f : 3, kAccent);
+    }
+    // live delta to the fastest lap (another lap than this one) at this point
+    const int best = refLapFor(rec, 0, lap);
+    const float rx = box.x + box.width - (big ? 14 : 8), ry = box.y + (big ? 10 : 2);
+    char buf[64];
+    bool ok = false;
+    float d = 0;
+    if (best > 0 && best != lap && !S.empty()) {
+        int bf, be;
+        rec.lapRange(best, bf, be);
+        const rr::TestSample cur = cursorSample(tv);
+        if (cur.lap == lap) d = cur.lapTime - timeAtDist(rec, bf, be, cur.lapDist, &ok);
+        // at the line of a finished lap: the lap times themselves
+        if (!ok && cur.lap == lap && lap <= (int)rec.laps.size() && be > bf && cur.lapDist >= S[be - 1].lapDist) {
+            d = rec.laps[lap - 1].time - rec.laps[best - 1].time;
+            ok = true;
+        }
+    }
+    if (ok) {
+        std::snprintf(buf, sizeof buf, "%+.3f", d);
+        textRight(buf, rx, ry, big ? 34 : 20, d <= 0 ? kGood : kBad, true, true);
+        std::snprintf(buf, sizeof buf, "to best (lap %d)", best);
+        textRight(buf, rx, ry + (big ? 38 : 22), big ? 13 : 11, kDim);
+    } else {
+        textRight("no best lap yet", rx, ry + 2, big ? 14 : 11, kFaint);
     }
 }
 
