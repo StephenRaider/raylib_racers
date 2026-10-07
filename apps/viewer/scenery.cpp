@@ -3,12 +3,16 @@
 // simple shapes and placed from the track's seed, so a track always looks the same.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <random>
 #include <unordered_map>
 
+#include "mini_json.hpp"
+
 #include "renderer.hpp"
 #include "raymath.h"
+#include "rlgl.h"
 
 using rr::Vec2;
 
@@ -142,12 +146,13 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     enum TreeKind { CONIFER, BROADLEAF, PALM, BUSH };
     const float tileSize = 300;
     std::unordered_map<long long, int> tileOf;
-    auto part = [&](TreePart k, Vector3 at, const Matrix& M, Color c) {
+    auto part = [&](int k, Vector3 at, const Matrix& M, Color c) {
         const long long key = ((long long)std::floor(at.x / tileSize) << 32) ^ (unsigned)(int)std::floor(at.z / tileSize);
         auto it = tileOf.find(key);
         if (it == tileOf.end()) {
             it = tileOf.emplace(key, (int)treeTiles_.size()).first;
             treeTiles_.emplace_back();
+            treeTiles_.back().parts.resize(treeSlots());
         }
         Matrix m = M;
         m.m3 = c.r / 255.0f, m.m7 = c.g / 255.0f, m.m11 = c.b / 255.0f;
@@ -159,6 +164,30 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         auto at = [&](float x, float y, float z, float sx, float sy, float sz) {
             return MatrixMultiply(MatrixScale(sx, sy, sz), MatrixMultiply(MatrixTranslate(x, y, z), T));
         };
+        // a tree model when there are some: textured, the tint only shades it a little
+        auto pick = [&](const char* kind) -> const TreeModel* {
+            int n = 0;
+            for (const TreeModel& m : treeModels_) n += m.kind == kind;
+            if (n == 0) return nullptr;
+            int i = (int)R(0, (float)n - 0.001f);
+            for (const TreeModel& m : treeModels_)
+                if (m.kind == kind && i-- == 0) return &m;
+            return nullptr;
+        };
+        const TreeModel* model = nullptr;
+        float height = 0;
+        if (k == CONIFER) model = pick("tree"), height = R(12, 15) * s;
+        if (k == BROADLEAF) model = pick("tree"), height = R(9, 12) * s;
+        if (k == BUSH) model = pick("bush"), height = R(1.6f, 2.4f) * s;
+        if (model) {
+            const Matrix M = MatrixMultiply(MatrixMultiply(MatrixScale(height, height, height), MatrixRotateY(yaw)), T);
+            const float v = R(0.85f, 1.05f);
+            const Color tint = mix({(unsigned char)(235 * v), (unsigned char)(240 * v), (unsigned char)(235 * v), 255},
+                                   {(unsigned char)std::min(255, leaf.r * 3), (unsigned char)std::min(255, leaf.g * 2),
+                                    (unsigned char)std::min(255, leaf.b * 3), 255}, 0.2f);
+            for (int slot : model->slots) part(slot, base, M, tint);
+            return;
+        }
         const Color bark = mix({92, 66, 45, 255}, {70, 56, 44, 255}, R(0, 1));
         switch (k) {
             case CONIFER: {
@@ -198,7 +227,8 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     };
     auto tree = [&](TreeKind k, Vec2 p, float scale, Color leaf) { treeAt(k, W(p), scale, leaf); };
     auto mound = [&](Vec2 c, float rx, float h, float rz, float yaw, Color col) {
-        add(P_MOUND, W(c, -h * 0.25f), {rx, h * 1.25f, rz}, yaw, col);
+        // the cap of a sunken, flattened sphere: a gentle hill `h` high, about 0.66 rx across
+        add(P_MOUND, W(c, -h * 3.0f), {rx, h * 4.0f, rz}, yaw, col);
         feet.push_back({c, std::max(rx, rz) * 0.85f});
     };
     // Trees where noise says forest: a jittered grid `spacing` apart over the land around the
@@ -267,7 +297,9 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     for (float s = 0; s < tr.length(); s += 250) {
         const auto& sm = sample(s);
         const float side = outside(s);
-        tvSpots_.push_back(W(sm.p + sm.n * (side * (sm.halfWidth + edge + 8.0f)), 6.0f));
+        const Vec2 q = sm.p + sm.n * (side * (sm.halfWidth + edge + 8.0f));
+        tvSpots_.push_back(W(q, 6.0f));
+        feet.push_back({q, 6});  // keep hills and buildings off the cameras
     }
 
     // ---- grandstands: the main straight (away from the pits), then the outside of the slow corners
@@ -349,7 +381,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 14; ++k) {
             const Vec2 p = randomPoint(450);
             if (!free(p, 140, 120)) continue;
-            mound(p, R(140, 260), R(40, 80), R(140, 260), R(0, PI), {44, 86, 46, 255});
+            mound(p, R(210, 390), R(40, 80), R(210, 390), R(0, PI), {44, 86, 46, 255});
         }
         for (int k = 0; k < 8; ++k) {
             const Vec2 p = randomPoint(100);
@@ -362,11 +394,14 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         // trees on the hills too
         for (const Prop& m : std::vector<Prop>(props_)) {
             if (m.kind != P_MOUND) continue;
-            for (int k = 0; k < 30; ++k) {
-                const float a = R(0, 2 * PI), d = R(0, 0.8f);
+            const int n = (int)(m.size.x * m.size.z * 0.4f / 110.0f);  // as dense as the woods
+            const Matrix rot = MatrixRotateY(m.yaw);
+            for (int k = 0; k < n; ++k) {
+                const float a = R(0, 2 * PI), d = 0.62f * std::sqrt(R(0, 1));
                 const float x = std::cos(a) * d, z = std::sin(a) * d;
                 const float h = m.pos.y + m.size.y * std::sqrt(std::max(0.0f, 1 - d * d)) - 0.5f;
-                treeAt(CONIFER, {m.pos.x + x * m.size.x, h, m.pos.z + z * m.size.z}, R(1.3f, 2.0f), mix(pine, leafDark, R(0, 1)));
+                const Vector3 off = Vector3Transform({x * m.size.x, 0, z * m.size.z}, rot);
+                treeAt(CONIFER, {m.pos.x + off.x, h, m.pos.z + off.z}, R(1.3f, 2.0f), mix(pine, leafDark, R(0, 1)));
             }
         }
     } else if (th == "airfield") {
@@ -420,7 +455,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 18; ++k) {
             const Vec2 p = randomPoint(500);
             if (!free(p, 120, 100)) continue;
-            mound(p, R(120, 240), R(25, 55), R(120, 240), R(0, PI), {110, 124, 58, 255});
+            mound(p, R(180, 360), R(25, 55), R(180, 360), R(0, PI), {110, 124, 58, 255});
         }
         for (int k = 0; k < 14; ++k) {
             const Vec2 p = randomPoint(150);
@@ -444,7 +479,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 40; ++k) {
             const Vec2 p = randomPoint(260);
             if (!free(p, 30, 30) || p.x < seaX + 150) continue;
-            mound(p, R(40, 110), R(8, 22), R(40, 110), R(0, PI), mix({214, 196, 146, 255}, {176, 168, 110, 255}, R(0, 1)));
+            mound(p, R(60, 160), R(8, 22), R(60, 160), R(0, PI), mix({140, 132, 90, 255}, {118, 116, 76, 255}, R(0, 1)));
         }
         woods(10, 0.55f, 140, 6, 300, [&](Vec2 p, float r) {
             if (p.x < seaX + 150) return;
@@ -482,7 +517,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 10; ++k) {
             const Vec2 p = randomPoint(400);
             if (!free(p, 110, 90)) continue;
-            mound(p, R(110, 200), R(25, 45), R(110, 200), R(0, PI), {70, 112, 52, 255});
+            mound(p, R(165, 300), R(25, 45), R(165, 300), R(0, PI), {70, 112, 52, 255});
         }
         for (int k = 0; k < 5; ++k) {
             const Vec2 p = randomPoint(160);
@@ -580,6 +615,7 @@ void Renderer::drawProps(bool shadowPass) {
 void Renderer::drawTrees(bool shadowPass) {
     const Vector3 cam = camera.position;
     const Vector3 fwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    treeBatch_.resize(treeSlots());
     for (auto& b : treeBatch_) b.clear();
     for (const TreeTile& t : treeTiles_) {
         if (shadowPass) {
@@ -593,12 +629,61 @@ void Renderer::drawTrees(bool shadowPass) {
         }
         // far away, the trunks and the smaller clumps of leaves are left out
         const bool far = !shadowPass && Vector3Distance(t.centre, cam) > 900 + t.radius;
-        for (int k = 0; k < TP_COUNT; ++k) {
+        for (int k = 0; k < (int)t.parts.size(); ++k) {
             if (far && (k == TP_TRUNK || k == TP_BLOB2)) continue;
             treeBatch_[k].insert(treeBatch_[k].end(), t.parts[k].begin(), t.parts[k].end());
         }
     }
     treeMat_.shader = shadowPass ? depthInst_ : litInst_;
-    for (int k = 0; k < TP_COUNT; ++k)
-        if (!treeBatch_[k].empty()) DrawMeshInstanced(treeMesh_[k == TP_BLOB2 ? TP_BLOB : k], treeMat_, treeBatch_[k].data(), (int)treeBatch_[k].size());
+    const unsigned whiteTex = rlGetTextureIdDefault();
+    rlDisableBackfaceCulling();  // leaf cards are seen from both sides
+    for (int k = 0; k < treeSlots(); ++k) {
+        if (treeBatch_[k].empty()) continue;
+        const bool model = k >= TP_COUNT;
+        treeMat_.maps[MATERIAL_MAP_DIFFUSE].texture =
+            model ? slotTex_[k - TP_COUNT] : Texture2D{whiteTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+        const Mesh& mesh = model ? slotMesh_[k - TP_COUNT] : treeMesh_[k == TP_BLOB2 ? TP_BLOB : k];
+        DrawMeshInstanced(mesh, treeMat_, treeBatch_[k].data(), (int)treeBatch_[k].size());
+    }
+    rlEnableBackfaceCulling();
+    treeMat_.maps[MATERIAL_MAP_DIFFUSE].texture = Texture2D{whiteTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+}
+
+// The tree models in assetsDir/scenery/trees (tools/import_trees.py). Without them the
+// scenery falls back to trees built from simple shapes.
+void Renderer::loadTrees(const std::string& assetsDir) {
+    const std::string dir = assetsDir + "/scenery/trees/";
+    char* text = assetsDir.empty() ? nullptr : LoadFileText((dir + "trees.json").c_str());
+    if (!text) return;
+    const mjson::Value root = mjson::parse(text);
+    UnloadFileText(text);
+    std::vector<std::string> texNames;
+    const mjson::Value& vs = root["variants"];
+    for (size_t i = 0; i < vs.size(); ++i) {
+        TreeModel tm;
+        tm.kind = vs[i]["kind"].str();
+        const mjson::Value& parts = vs[i]["parts"];
+        for (size_t j = 0; j < parts.size(); ++j) {
+            Model m = LoadModel((dir + parts[j]["mesh"].str()).c_str());
+            if (m.meshCount < 1) continue;
+            // keep the mesh, drop the model's own material
+            slotMesh_.push_back(m.meshes[0]);
+            m.meshCount = 0;
+            MemFree(m.meshes);
+            m.meshes = nullptr;
+            UnloadModel(m);
+            const std::string tn = parts[j]["texture"].str();
+            size_t t = std::find(texNames.begin(), texNames.end(), tn) - texNames.begin();
+            if (t == texNames.size()) {
+                Texture2D tex = LoadTexture((dir + tn).c_str());
+                GenTextureMipmaps(&tex);
+                SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
+                texNames.push_back(tn);
+                treeTextures_.push_back(tex);
+            }
+            slotTex_.push_back(treeTextures_[t]);
+            tm.slots.push_back(TP_COUNT + (int)slotMesh_.size() - 1);
+        }
+        if (!tm.slots.empty()) treeModels_.push_back(tm);
+    }
 }

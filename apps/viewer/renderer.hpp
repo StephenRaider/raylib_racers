@@ -73,12 +73,24 @@ private:
     struct TreeTile {
         Vector3 centre{};
         float radius = 0;
-        std::vector<Matrix> parts[TP_COUNT];  // colour in m3, m7, m11
+        std::vector<std::vector<Matrix>> parts;  // per slot; colour in m3, m7, m11
     };
     std::vector<TreeTile> treeTiles_;
-    std::vector<Matrix> treeBatch_[TP_COUNT];  // per-frame gather of the visible tiles
+    std::vector<std::vector<Matrix>> treeBatch_;  // per-frame gather of the visible tiles
     Mesh treeMesh_[TP_COUNT]{};
     Material treeMat_{};
+    // Trees from assets/scenery/trees (textured, leaf cut-outs). Each part of each model is
+    // one instancing slot after the TP_COUNT procedural ones.
+    struct TreeModel {
+        std::string kind;  // tree, broadleaf, bush
+        std::vector<int> slots;
+    };
+    std::vector<TreeModel> treeModels_;
+    std::vector<Mesh> slotMesh_;            // model slots only (index slot - TP_COUNT)
+    std::vector<Texture2D> slotTex_;
+    std::vector<Texture2D> treeTextures_;   // owned
+    void loadTrees(const std::string& assetsDir);  // scenery.cpp
+    int treeSlots() const { return TP_COUNT + (int)slotMesh_.size(); }
     std::string theme_;  // the track's scenery theme
     std::vector<Vector3> tvSpots_;
     Vector3 shadowCentre_{};

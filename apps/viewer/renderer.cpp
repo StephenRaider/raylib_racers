@@ -57,6 +57,7 @@ uniform float specStrength;
 uniform mat4 lightVP;
 uniform sampler2D shadowMap;
 uniform int shadowMapResolution;
+uniform float alphaCut;  // leaf cut-outs: below this alpha the fragment is dropped
 out vec4 finalColor;
 
 float shadowFactor(vec3 n, vec3 l) {
@@ -79,8 +80,10 @@ float shadowFactor(vec3 n, vec3 l) {
 
 void main() {
     vec4 tex = texture(texture0, fragTexCoord);
+    if (tex.a < alphaCut) discard;
     vec3 base = tex.rgb * colDiffuse.rgb * fragColor.rgb;
     vec3 n = normalize(fragNormal);
+    if (!gl_FrontFacing) n = -n;  // two-sided leaf cards
     vec3 l = -normalize(lightDir);
     float ndl = max(dot(n, l), 0.0);
     float sh = ndl > 0.0 ? shadowFactor(n, l) : 0.0;
@@ -124,12 +127,27 @@ void main() {
 
 const char* kDepthInstVS = R"(#version 330
 in vec3 vertexPosition;
+in vec2 vertexTexCoord;
 layout(location = 10) in mat4 instanceTransform;  // clear of the mesh attributes (0-8)
 uniform mat4 mvp;
+out vec2 fragTexCoord;
 void main() {
     mat4 M = instanceTransform;
     M[0][3] = 0.0; M[1][3] = 0.0; M[2][3] = 0.0;
+    fragTexCoord = vertexTexCoord;
     gl_Position = mvp * M * vec4(vertexPosition, 1.0);
+}
+)";
+
+// Leaf cut-outs cast their shape, not their card.
+const char* kDepthInstFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;
+uniform float alphaCut;
+out vec4 finalColor;
+void main() {
+    if (texture(texture0, fragTexCoord).a < alphaCut) discard;
+    finalColor = vec4(1.0);
 }
 )";
 
@@ -282,7 +300,7 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
     lit_ = LoadShaderFromMemory(kLitVS, kLitFS);
     depth_ = LoadShaderFromMemory(kDepthVS, kDepthFS);
     litInst_ = LoadShaderFromMemory(kLitInstVS, kLitFS);
-    depthInst_ = LoadShaderFromMemory(kDepthInstVS, kDepthFS);
+    depthInst_ = LoadShaderFromMemory(kDepthInstVS, kDepthInstFS);
     for (Shader* sh : {&lit_, &depth_, &litInst_, &depthInst_})
         if (sh->id == 0 || sh->id == rlGetShaderIdDefault()) {
             if (err) *err = "shader compilation failed (OpenGL 3.3 required)";
@@ -308,6 +326,10 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
         SetShaderValue(*sh, GetShaderLocation(*sh, "specStrength"), &spec, SHADER_UNIFORM_FLOAT);
         int res = shadowRes_;
         SetShaderValue(*sh, GetShaderLocation(*sh, "shadowMapResolution"), &res, SHADER_UNIFORM_INT);
+    }
+    for (Shader* sh : {&litInst_, &depthInst_}) {
+        float cut = 0.5f;
+        SetShaderValue(*sh, GetShaderLocation(*sh, "alphaCut"), &cut, SHADER_UNIFORM_FLOAT);
     }
     {
         int slot = 10;  // where draw() binds the shadow map
@@ -383,6 +405,7 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
                  assetsDir.empty() ? "no assets folder" : carErr.c_str());
 
     buildTrack(track);
+    loadTrees(assetsDir);
     buildScenery(track, seed);
     return true;
 }
@@ -401,6 +424,8 @@ void Renderer::shutdown() {
         if (t->id) UnloadTexture(*t);
     for (Mesh& m : treeMesh_)
         if (m.vertexCount) UnloadMesh(m);
+    for (Mesh& m : slotMesh_) UnloadMesh(m);
+    for (Texture2D& t : treeTextures_) UnloadTexture(t);
     if (treeMat_.maps) {
         treeMat_.shader = Shader{rlGetShaderIdDefault(), rlGetShaderLocsDefault()};
         UnloadMaterial(treeMat_);
