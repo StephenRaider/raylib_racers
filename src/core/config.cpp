@@ -45,6 +45,17 @@ std::string usage(const char* prog, bool viewer) {
         "                         in DIR (runs.json, run_N/summary.json, run_N/telemetry.csv)\n"
         "  --quiet                print only the results\n"
         "  --cool-down            after the flag, run on until the cars have parked in the pit lane\n";
+    if (!viewer) {
+        u += "Championship\n"
+             "  --championship FILE    race the next round of the season saved in FILE, then save it;\n"
+             "                         a new FILE starts a season with --lineup or the --car entries\n"
+             "                         (consecutive pairs are teams; a team takes its first car's --dev)\n"
+             "  --lineup FILE          the teams, their stats and drivers for a new season\n"
+             "  --rounds LIST          calendar of a new season, e.g. monza:10,spa:8 (default: the eight\n"
+             "                         championship tracks at --laps)\n"
+             "  --all-rounds           race every remaining round\n"
+             "  --save-lineup FILE     save the --car entries as a lineup and exit\n";
+    }
     if (viewer) {
         u += "Viewer\n"
              "  --width N --height N  window size (default 1600x900)\n"
@@ -121,6 +132,11 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (a == "--telemetry") cfg.telemetryDir = need(i, a);
             else if (a == "--quiet") cfg.quiet = true;
             else if (a == "--cool-down") cfg.coolDown = true;
+            else if (!viewer && a == "--championship") cfg.championship = need(i, a);
+            else if (!viewer && a == "--lineup") cfg.lineup = need(i, a);
+            else if (!viewer && a == "--rounds") cfg.rounds = need(i, a);
+            else if (!viewer && a == "--all-rounds") cfg.allRounds = true;
+            else if (!viewer && a == "--save-lineup") cfg.saveLineup = need(i, a);
             else if (viewer && a == "--width") cfg.width = std::stoi(need(i, a));
             else if (viewer && a == "--height") cfg.height = std::stoi(need(i, a));
             else if (viewer && a == "--fullscreen") cfg.fullscreen = true;

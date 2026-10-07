@@ -171,6 +171,25 @@ run's setup back into the menu (`Enter`) and replays its telemetry (`V`).
 `rr_race --test-log DIR --no-pits --car ...` records and saves a run the same
 way without a window.
 
+**Championships** run a season over a calendar of tracks with the modern F1
+points (25-18-15-12-10-8-6-4-2-1 for the top ten, no fastest-lap point),
+driver and constructor standings, and countback (most wins, then most seconds,
+and so on) for ties. The lineup (teams, their stats and their drivers) is fixed
+for the whole season. A season is a JSON file that can be resumed. Without a
+window:
+
+```
+./build/rr_race --save-lineup my_grid.json --car racingline --dev "top_speed=7,brakes=3" --car dave --car spongebob --car granny
+./build/rr_race --championship season.json --lineup my_grid.json --laps 10   # round 1 of the 8-track calendar
+./build/rr_race --championship season.json --all-rounds                     # the rest of the season
+```
+
+`--rounds monza:10,spa:8` picks a custom calendar. The default calendar is
+Circuit Raylib, Kuala Speedway, Brands Lane, Silverfield, Magyar Park, Ardennes
+Ring, Dunes of Zandhoek and Autodromo Monzetta. The first round's grid follows
+the lineup, and later grids follow the standings. Races stay deterministic, so
+the same season gives the same results.
+
 The engine sound is synthesised from each car's revs and throttle (a V10 with
 overrun pops and a rev limiter), for the cars nearest the camera. `M` mutes it;
 `rr_viewer --sound-test out.wav --at 20` writes 25 s of it to a file.

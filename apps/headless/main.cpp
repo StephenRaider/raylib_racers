@@ -2,12 +2,76 @@
 #include <chrono>
 #include <cstdio>
 
+#include "../../src/core/championship.hpp"
 #include "../../src/core/race.hpp"
 #include "../../src/core/testlog.hpp"
 
 #ifndef RR_SOURCE_DIR
 #define RR_SOURCE_DIR "."
 #endif
+
+// --championship: races the season's next round (or all of them) and saves the file.
+static int runChampionship(const rr::RaceConfig& cfg, const std::vector<std::string>& bots,
+                           const std::vector<std::string>& tracks) {
+    std::string err;
+    rr::Championship ch;
+    if (std::FILE* f = std::fopen(cfg.championship.c_str(), "r")) {
+        std::fclose(f);
+        if (!rr::Championship::load(cfg.championship, ch, &err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+    } else {
+        if (!cfg.lineup.empty()) {
+            if (!rr::Lineup::load(cfg.lineup, ch.lineup, &err)) {
+                std::fprintf(stderr, "error: %s\n", err.c_str());
+                return 1;
+            }
+        } else if (!cfg.entries.empty()) {
+            ch.lineup = rr::Lineup::fromEntries(cfg.entries);
+        } else {
+            std::fprintf(stderr, "error: a new championship needs --lineup FILE or --car entries\n");
+            return 2;
+        }
+        if (!rr::Championship::parseRounds(cfg.rounds, cfg.laps, ch.rounds, &err)) {
+            std::fprintf(stderr, "error: --rounds: %s\n", err.c_str());
+            return 2;
+        }
+        ch.wearRate = cfg.wearRate;
+        ch.twoCompounds = cfg.twoCompounds;
+        ch.seed = cfg.seed;
+    }
+    if (ch.over()) {
+        std::printf("%s is over\n", ch.name.c_str());
+        ch.printStandings(stdout);
+        return 0;
+    }
+    do {
+        const std::vector<int> grid = ch.nextGrid();
+        rr::RaceConfig rc = ch.roundConfig(cfg, grid);
+        rr::Race race;
+        if (!race.setup(rc, bots, tracks, &err)) {
+            std::fprintf(stderr, "error: round %d: %s\n", ch.roundsDone() + 1, err.c_str());
+            return 1;
+        }
+        std::printf("Round %d of %d: %s, %d laps\n", ch.roundsDone() + 1, (int)ch.rounds.size(),
+                    race.track().name().c_str(), rc.laps);
+        while (!race.isOver()) race.step();
+        ch.record(race, grid);
+        const rr::RoundResult& r = ch.results.back();
+        for (size_t p = 0; p < r.order.size(); ++p)
+            std::printf("  %2zu. %-24s %-16s %3d\n", p + 1, ch.lineup.driver(r.order[p]).name.c_str(),
+                        r.status[p].c_str(), r.points[p]);
+        if (r.fastest >= 0)
+            std::printf("  fastest lap: %s %.3f\n", ch.lineup.driver(r.fastest).name.c_str(), r.fastestLap);
+        if (!ch.save(cfg.championship, &err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+    } while (cfg.allRounds && !ch.over());
+    ch.printStandings(stdout);
+    return 0;
+}
 
 int main(int argc, char** argv) {
     rr::RaceConfig cfg;
@@ -21,14 +85,29 @@ int main(int argc, char** argv) {
         std::printf("%s", rr::usage(argv[0], false).c_str());
         return 0;
     }
+    const std::string dir = rr::exeDir(argv[0]);
+    const std::vector<std::string> botDirs = {dir + "/bots", dir, "bots", "."};
+    const std::vector<std::string> trackDirs = {dir + "/tracks", RR_SOURCE_DIR "/tracks", "tracks"};
+    if (!cfg.saveLineup.empty()) {
+        if (cfg.entries.empty()) {
+            std::fprintf(stderr, "error: --save-lineup needs --car entries\n");
+            return 2;
+        }
+        if (!rr::Lineup::fromEntries(cfg.entries).save(cfg.saveLineup, &err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+        std::printf("lineup saved in %s\n", cfg.saveLineup.c_str());
+        return 0;
+    }
+    if (!cfg.championship.empty()) return runChampionship(cfg, botDirs, trackDirs);
     if (cfg.entries.empty()) {
         cfg.entries = {{"racingline", "", "", "", ""}, {"gapfollow", "", "", "", ""}, {"simple", "", "", "", ""}};
         if (!cfg.quiet) std::printf("no --car given, racing the example robots\n");
     }
 
-    const std::string dir = rr::exeDir(argv[0]);
     rr::Race race;
-    if (!race.setup(cfg, {dir + "/bots", dir, "bots", "."}, {dir + "/tracks", RR_SOURCE_DIR "/tracks", "tracks"}, &err)) {
+    if (!race.setup(cfg, botDirs, trackDirs, &err)) {
         std::fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
     }
