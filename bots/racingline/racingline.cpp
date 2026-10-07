@@ -1060,6 +1060,11 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     // Speed control against the profile, looking a little ahead for actuator lag.
     int si = r->wrap(idx + (int)(v * 0.15f / r->ds) + 1);
     float vTarget = std::min(r->speed[si] * std::sqrt(r->tyreNow), speedCap);
+    // A crawling, stopped or rejoining car ahead: brake to pass it safely (rr_awareness.h).
+    {
+        const float hzLat = in->track_pos * r->tp[idx].half_width;
+        vTarget = std::min(vTarget, rr_hazard_speed(in, hzLat, hzLat, v, 22.0f * rr_stopping_factor(in)));
+    }
 
     if (pitting) {
         const RRPitInfo& p = r->pit;
