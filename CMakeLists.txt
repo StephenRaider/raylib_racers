@@ -102,7 +102,8 @@ if(RR_BUILD_VIEWER)
     apps/viewer/menu.cpp
     apps/viewer/hud_test.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp
     apps/viewer/test_figures.cpp
-    apps/viewer/liveries.cpp)
+    apps/viewer/liveries.cpp
+    apps/viewer/scenery.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
   target_compile_options(rr_viewer PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
   rr_output(rr_viewer "${RR_OUT}")
