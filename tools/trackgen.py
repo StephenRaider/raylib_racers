@@ -36,15 +36,16 @@ TRACKS = {
         name="Ardennes Ring", length=6900, stretch=(0.95, 1.08), width=13, runoff=9, pitspeed=22,
         about="Long and fast: La Source hairpin, the Eau Rouge-Raidillon kink, Kemmel straight, Pouhon and Blanchimont.",
         ref="spa", start_width=14, start_shift=70, bend=-0.1, edits=[
-            ("flatten", "Le Kink", 60, 0.9),          # a fast kink instead of the Bus Stop
+            ("flatten", "Le Kink", 90, 1.0),          # a fast kink instead of the Bus Stop
+            ("flatten", "Blanchepierre", 160, 0.5),    # an easier flat-out left
             ("chicane", "Les Crêtes", 90, 25, -380),   # a chicane halfway along the long straight
-            ("bulge", "Grand Virage", 160, -70),             # a longer, wider double left
+            ("bulge", "Grand Virage", 180, -40),             # a longer, wider double left
             ("bulge", "Stavel", 90, 40),
         ], labels=[
             (279, 1026, "La Fontaine", 17), (595, 607, "Ruisseau", 12), (552, 488, "La Montee", 11),
             (1420, 35, "Les Crêtes", 14), (1588, 48, "Malvaux", 11), (1770, 356, "Rivière", 15),
             (1290, 405, "Grand Virage", 13), (1539, 675, "Bruyères", 10), (1680, 1053, "Stavel", 14),
-            (1055, 685, "Blanchepierre", 11), (649, 820, "Le Kink", 15)]),
+            (1055, 685, "Blanchepierre", 14), (649, 820, "Le Kink", 15)]),
     "silverstone": dict(
         name="Silverfield", length=5800, stretch=(1.06, 0.95), width=15, runoff=10, pitspeed=22,
         about="Fast and flowing: Abbey, the Loop, Luffield, Copse and the Maggotts-Becketts-Chapel esses into Hangar straight.",
@@ -82,12 +83,13 @@ TRACKS = {
             (1106, 1053, "Tarzanbocht", 14), (1137, 651, "Gerritsbocht", 10), (1253, 578, "Komkom", 13),
             (826, 597, "Duinrug", 10), (655, 678, "Slotbocht", 11), (307, 553, "Scheepsvlak", 12),
             (487, 203, "Meesterbocht", 10), (460, 480, "Bocht 10", 11), (1138, 373, "Haaks", 10),
-            (1173, 47, "Kuipbocht", 13), (1515, 154, "Lange Bocht", 13)]),
+            (1173, 47, "Kuipbocht", 14), (1515, 154, "Lange Bocht", 14)]),
     "sepang": dict(
         name="Kuala Speedway", length=5500, stretch=(1.0, 1.1), width=17, runoff=10, pitspeed=22,
         about="Wide and fast: the turn 1-2 hairpin complex, sweeping esses, and two long straights joined by a hairpin.",
         ref="sepang", start_width=18, bend=-0.08, edits=[
             ("bulge", "T9", 80, 50),                   # a looser hairpin
+            ("bulge", "T1", 100, -50),                  # a more open turn 1
             ("flatten", "T5-T6", 90, 0.7),             # gentler esses
             ("chicane", "T15", 100, 25, -500),         # a chicane on the back straight
             ("bulge", "T3", 120, 50),
