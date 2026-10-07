@@ -1,6 +1,7 @@
 # Raylib Racers: a 3 km road course with a long main straight,
 # a fast sweeper, two hairpins and a chicane.
 name Circuit Raylib
+scenery classic
 width 14
 runoff 7
 # Pit lane on the inside of the main straight, just after the start line.

@@ -21,7 +21,7 @@ TRACKS = {
     # then stretched and resized so they share the shape but are not copies.
     # labels: (x, y) pixel in the source map, corner name, track width there (m).
     "monza": dict(
-        name="Autodromo Monzetta", length=5700, stretch=(1.0, 1.12), width=14, runoff=9, pitspeed=22,
+        name="Autodromo Monzetta", scenery="parkland", length=5700, stretch=(1.0, 1.12), width=14, runoff=9, pitspeed=22,
         about="Temple of speed: long straights broken by chicanes, Curva Grande, the Lesmos, Ascari and the Parabolica.",
         ref="monza", start_width=15, bend=0.1, edits=[
             ("flatten", "Bosco", 70, 0.9),            # Roggia becomes a fast kink
@@ -33,7 +33,7 @@ TRACKS = {
             (160, 116, "Lesmini 1", 14), (424, 32, "Lesmini 2", 12), (876, 654, "Serpente", 11),
             (1758, 664, "Ellisse", 17)]),
     "spa": dict(
-        name="Ardennes Ring", length=6900, stretch=(0.95, 1.08), width=13, runoff=9, pitspeed=22,
+        name="Ardennes Ring", scenery="forest", length=6900, stretch=(0.95, 1.08), width=13, runoff=9, pitspeed=22,
         about="Long and fast: La Source hairpin, the Eau Rouge-Raidillon kink, Kemmel straight, Pouhon and Blanchimont.",
         ref="spa", start_width=14, start_shift=70, bend=-0.1, edits=[
             ("flatten", "Le Kink", 90, 1.0),          # a fast kink instead of the Bus Stop
@@ -47,7 +47,7 @@ TRACKS = {
             (1290, 405, "Grand Virage", 13), (1539, 675, "Bruyères", 10), (1680, 1053, "Stavel", 14),
             (1055, 685, "Blanchepierre", 14), (649, 820, "Le Kink", 15)]),
     "silverstone": dict(
-        name="Silverfield", length=5800, stretch=(1.06, 0.95), width=15, runoff=10, pitspeed=22,
+        name="Silverfield", scenery="airfield", length=5800, stretch=(1.06, 0.95), width=15, runoff=10, pitspeed=22,
         about="Fast and flowing: Abbey, the Loop, Luffield, Copse and the Maggotts-Becketts-Chapel esses into Hangar straight.",
         ref="silverstone", start_width=16, start_shift=40, bend=0.1, edits=[
             ("bulge", "Lufton", 90, 50),             # a bigger loop at the far end
@@ -60,7 +60,7 @@ TRACKS = {
             (1202, 812, "Magpies", 13), (1140, 933, "Becks", 12), (903, 950, "Chantry", 14),
             (180, 460, "Stow", 17), (444, 188, "Dale", 12), (416, 129, "Clubhouse", 15)]),
     "hungaroring": dict(
-        name="Magyar Park", length=4380, stretch=(0.94, 1.06), width=12, runoff=8, pitspeed=22,
+        name="Magyar Park", scenery="hills", length=4380, stretch=(0.94, 1.06), width=12, runoff=8, pitspeed=22,
         about="Tight and twisty, hard to pass on: a long run to the turn 1 hairpin, then corner after corner.",
         ref="hungaroring", start_width=14, bend=-0.1, edits=[
             ("bulge", "T4-T5", 110, 60),               # a longer loop out to the far corner
@@ -72,7 +72,7 @@ TRACKS = {
             (1562, 445, "T6", 10), (1344, 563, "T8", 11), (1479, 691, "T9", 12), (1236, 782, "T10", 11),
             (1212, 998, "T11", 13), (836, 911, "T12", 10), (771, 663, "T13", 12), (668, 970, "T14", 14)]),
     "zandvoort": dict(
-        name="Dunes of Zandhoek", length=4260, stretch=(1.08, 1.0), width=11, runoff=7, pitspeed=20,
+        name="Dunes of Zandhoek", scenery="dunes", length=4260, stretch=(1.08, 1.0), width=11, runoff=7, pitspeed=20,
         about="Narrow and compact among the dunes: the Tarzan hairpin, Hugenholtz, Scheivlak and the long banked final right.",
         ref="zandvoort", start_width=12, bend=0.1, edits=[
             ("flatten", "Haaks", 60, 0.9),        # no chicane: a quick right
@@ -85,7 +85,7 @@ TRACKS = {
             (487, 203, "Meesterbocht", 10), (460, 480, "Bocht 10", 11), (1138, 373, "Haaks", 10),
             (1173, 47, "Kuipbocht", 14), (1515, 154, "Lange Bocht", 14)]),
     "sepang": dict(
-        name="Kuala Speedway", length=5500, stretch=(1.0, 1.1), width=17, runoff=10, pitspeed=22,
+        name="Kuala Speedway", scenery="tropical", length=5500, stretch=(1.0, 1.1), width=17, runoff=10, pitspeed=22,
         about="Wide and fast: the turn 1-2 hairpin complex, sweeping esses, and two long straights joined by a hairpin.",
         ref="sepang", start_width=18, bend=-0.08, edits=[
             ("bulge", "T9", 80, 50),                   # a looser hairpin
@@ -99,7 +99,7 @@ TRACKS = {
             (3829, 2740, "T9", 14), (4489, 3050, "T10-T11", 16), (3217, 3168, "T12", 15),
             (2105, 2861, "T14", 18), (5141, 2174, "T15", 19)]),
     "brands": dict(
-    name="Brands Lane", length=3900, width=11, pitspeed=20,
+    name="Brands Lane", scenery="woodland", length=3900, width=11, pitspeed=20,
     about="Old-school and narrow: Paddock Hill Bend, the Druids hairpin, a blast through the woods to Hawthorn and back via Clearways.",
     start=(130,0), runoff=7, verts=[
         (420,0,100,12),                            # Paddock Hill
@@ -317,6 +317,7 @@ def write(key, t, pts):
         f"# Raylib Racers: {t['name']}, {total / 1000:.2f} km. {t['about']}",
         "# Generated by tools/trackgen.py (edit the layout there, not here).",
         f"name {t['name']}",
+        f"scenery {t['scenery']}",
         f"width {t['width']}",
         f"runoff {t['runoff']}",
         f"pit right {entry % total:.0f} {lane_start % total:.0f} {lane_end:.0f} {exit_s:.0f}",

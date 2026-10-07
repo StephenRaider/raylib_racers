@@ -96,6 +96,43 @@ void main() {
 }
 )";
 
+// Instanced trees: the per-instance model matrix carries the leaf colour in its unused
+// bottom row (m3, m7, m11), so thousands of trees draw in a few calls.
+const char* kLitInstVS = R"(#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec3 vertexNormal;
+in vec4 vertexColor;
+layout(location = 10) in mat4 instanceTransform;  // clear of the mesh attributes (0-8)
+uniform mat4 mvp;
+out vec3 fragPosition;
+out vec2 fragTexCoord;
+out vec4 fragColor;
+out vec3 fragNormal;
+void main() {
+    mat4 M = instanceTransform;
+    vec3 tint = vec3(M[0][3], M[1][3], M[2][3]);
+    M[0][3] = 0.0; M[1][3] = 0.0; M[2][3] = 0.0;
+    vec4 wp = M * vec4(vertexPosition, 1.0);
+    fragPosition = wp.xyz;
+    fragTexCoord = vertexTexCoord;
+    fragColor = vertexColor * vec4(tint, 1.0);
+    fragNormal = normalize(transpose(inverse(mat3(M))) * vertexNormal);
+    gl_Position = mvp * wp;
+}
+)";
+
+const char* kDepthInstVS = R"(#version 330
+in vec3 vertexPosition;
+layout(location = 10) in mat4 instanceTransform;  // clear of the mesh attributes (0-8)
+uniform mat4 mvp;
+void main() {
+    mat4 M = instanceTransform;
+    M[0][3] = 0.0; M[1][3] = 0.0; M[2][3] = 0.0;
+    gl_Position = mvp * M * vec4(vertexPosition, 1.0);
+}
+)";
+
 const char* kDepthVS = R"(#version 330
 in vec3 vertexPosition;
 uniform mat4 mvp;
@@ -244,27 +281,38 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
 
     lit_ = LoadShaderFromMemory(kLitVS, kLitFS);
     depth_ = LoadShaderFromMemory(kDepthVS, kDepthFS);
-    if (lit_.id == 0 || depth_.id == 0 || lit_.id == rlGetShaderIdDefault()) {
-        if (err) *err = "shader compilation failed (OpenGL 3.3 required)";
-        return false;
-    }
+    litInst_ = LoadShaderFromMemory(kLitInstVS, kLitFS);
+    depthInst_ = LoadShaderFromMemory(kDepthInstVS, kDepthFS);
+    for (Shader* sh : {&lit_, &depth_, &litInst_, &depthInst_})
+        if (sh->id == 0 || sh->id == rlGetShaderIdDefault()) {
+            if (err) *err = "shader compilation failed (OpenGL 3.3 required)";
+            return false;
+        }
     lit_.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(lit_, "matModel");
     lit_.locs[SHADER_LOC_MATRIX_NORMAL] = GetShaderLocation(lit_, "matNormal");
+    litInst_.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(litInst_, "instanceTransform");
+    depthInst_.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(depthInst_, "instanceTransform");
     locLightVP_ = GetShaderLocation(lit_, "lightVP");
     locShadowMap_ = GetShaderLocation(lit_, "shadowMap");
     locViewPos_ = GetShaderLocation(lit_, "viewPos");
     locSpec_ = GetShaderLocation(lit_, "specStrength");
-    auto set3 = [&](const char* name, Vector3 v) { SetShaderValue(lit_, GetShaderLocation(lit_, name), &v, SHADER_UNIFORM_VEC3); };
-    set3("lightDir", kLightDir);
-    set3("lightColor", {1.05f, 1.0f, 0.92f});
-    set3("ambientSky", {0.42f, 0.50f, 0.62f});
-    set3("ambientGround", {0.24f, 0.24f, 0.20f});
-    set3("fogColor", {kSkyHorizon.r / 255.0f, kSkyHorizon.g / 255.0f, kSkyHorizon.b / 255.0f});
-    float spec = 0.15f;
     locFog_ = GetShaderLocation(lit_, "fogDensity");
-    SetShaderValue(lit_, locSpec_, &spec, SHADER_UNIFORM_FLOAT);
-    int res = shadowRes_;
-    SetShaderValue(lit_, GetShaderLocation(lit_, "shadowMapResolution"), &res, SHADER_UNIFORM_INT);
+    for (Shader* sh : {&lit_, &litInst_}) {
+        auto set3 = [&](const char* name, Vector3 v) { SetShaderValue(*sh, GetShaderLocation(*sh, name), &v, SHADER_UNIFORM_VEC3); };
+        set3("lightDir", kLightDir);
+        set3("lightColor", {1.05f, 1.0f, 0.92f});
+        set3("ambientSky", {0.42f, 0.50f, 0.62f});
+        set3("ambientGround", {0.24f, 0.24f, 0.20f});
+        set3("fogColor", {kSkyHorizon.r / 255.0f, kSkyHorizon.g / 255.0f, kSkyHorizon.b / 255.0f});
+        float spec = sh == &lit_ ? 0.15f : 0.04f;
+        SetShaderValue(*sh, GetShaderLocation(*sh, "specStrength"), &spec, SHADER_UNIFORM_FLOAT);
+        int res = shadowRes_;
+        SetShaderValue(*sh, GetShaderLocation(*sh, "shadowMapResolution"), &res, SHADER_UNIFORM_INT);
+    }
+    {
+        int slot = 10;  // where draw() binds the shadow map
+        SetShaderValue(litInst_, GetShaderLocation(litInst_, "shadowMap"), &slot, SHADER_UNIFORM_INT);
+    }
 
     // Depth-only render target for the sun's shadow map.
     shadowMap_.id = rlLoadFramebuffer();
@@ -291,11 +339,21 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
         if (hashf(x, y, 11) > 0.995f) g += 18;  // aggregate specks
         return Color{c8(g), c8(g), c8(g + 4), 255};
     });
-    texGrass_ = makeTexture(512, [](int x, int y) {
+    // grass: greener in the forest, paler on the airfield, sandy among the dunes
+    theme_ = track.scenery();
+    Vector3 grass = {66, 104, 48};
+    float dry = 22;
+    if (theme_ == "forest") grass = {52, 96, 44};
+    else if (theme_ == "airfield") grass = {84, 118, 60};
+    else if (theme_ == "hills") grass = {92, 112, 52}, dry = 30;
+    else if (theme_ == "dunes") grass = {150, 146, 96}, dry = 40;
+    else if (theme_ == "tropical") grass = {50, 108, 42};
+    else if (theme_ == "parkland") grass = {62, 106, 46};
+    texGrass_ = makeTexture(512, [grass, dry](int x, int y) {
         float u = x / 512.0f, v = y / 512.0f;
         float big = fbm(u, v, 4, 4, 21), fine = hashf(x, y, 5);
         float k = 0.72f + 0.45f * big + 0.12f * (fine - 0.5f);
-        return Color{c8(66 * k + 22 * big), c8(104 * k), c8(48 * k), 255};
+        return Color{c8(grass.x * k + dry * big), c8(grass.y * k), c8(grass.z * k), 255};
     });
     {
         Image chk = GenImageChecked(64, 64, 8, 8, RAYWHITE, Color{25, 25, 25, 255});
@@ -311,6 +369,13 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
     mdlSphere_ = LoadModelFromMesh(GenMeshSphere(1, 12, 16));
     mdlCone_ = LoadModelFromMesh(GenMeshCone(1, 1, 10));
     mdlTrunk_ = LoadModelFromMesh(GenMeshCylinder(1, 1, 8));
+    mdlPyramid_ = LoadModelFromMesh(GenMeshCone(1, 1, 4));
+    // low-poly tree parts, only ever drawn instanced
+    treeMesh_[TP_TRUNK] = GenMeshCylinder(1, 1, 5);
+    treeMesh_[TP_CONE] = GenMeshCone(1, 1, 7);
+    treeMesh_[TP_BLOB] = GenMeshSphere(1, 6, 8);
+    treeMesh_[TP_FROND] = GenMeshCube(1, 1, 1);
+    treeMat_ = LoadMaterialDefault();
 
     std::string carErr;
     if (assetsDir.empty() || !carModel_.load(assetsDir, &carErr))
@@ -326,7 +391,7 @@ void Renderer::shutdown() {
     carModel_.unload();
     // Shared textures are owned here, not by the models.
     for (Model* m : {&mdlAsphalt_, &mdlMarkings_, &mdlWalls_, &mdlGround_, &mdlStart_, &mdlCube_, &mdlWheel_,
-                     &mdlSphere_, &mdlCone_, &mdlTrunk_}) {
+                     &mdlSphere_, &mdlCone_, &mdlTrunk_, &mdlPyramid_}) {
         if (m->meshCount == 0) continue;
         m->materials[0].maps[MATERIAL_MAP_DIFFUSE].texture.id = rlGetTextureIdDefault();
         m->materials[0].shader = Shader{rlGetShaderIdDefault(), rlGetShaderLocsDefault()};
@@ -334,8 +399,13 @@ void Renderer::shutdown() {
     }
     for (Texture2D* t : {&texAsphalt_, &texGrass_, &texChecker_})
         if (t->id) UnloadTexture(*t);
-    UnloadShader(lit_);
-    UnloadShader(depth_);
+    for (Mesh& m : treeMesh_)
+        if (m.vertexCount) UnloadMesh(m);
+    if (treeMat_.maps) {
+        treeMat_.shader = Shader{rlGetShaderIdDefault(), rlGetShaderLocsDefault()};
+        UnloadMaterial(treeMat_);
+    }
+    for (Shader* sh : {&lit_, &depth_, &litInst_, &depthInst_}) UnloadShader(*sh);
     if (shadowMap_.id) {
         rlUnloadTexture(shadowMap_.depth.id);
         rlUnloadFramebuffer(shadowMap_.id);
@@ -464,74 +534,6 @@ void Renderer::buildTrack(const rr::Track& tr) {
     mdlWalls_ = modelFrom(walls.build(), texWhite_);
     mdlGround_ = modelFrom(ground.build(), texGrass_);
     mdlStart_ = modelFrom(start.build(), texChecker_);
-}
-
-void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
-    // Gantry over the start line.
-    const auto& s0 = tr.at(0);
-    float yaw0 = std::atan2(s0.t.y, s0.t.x);
-    float postOff = s0.halfWidth + tr.runoff() + 1.2f;
-    Color gantry = {55, 58, 66, 255};
-    for (float side : {1.0f, -1.0f})
-        boxes_.push_back({W(s0.p + s0.n * (side * postOff), 3.75f), {0.6f, 7.5f, 0.6f}, gantry});
-    boxes_.push_back({W(s0.p, 7.2f), {0.9f, 1.4f, 2 * postOff + 0.6f}, gantry});
-    // (boxes_ store size in the track frame: x along the track, z across; yaw applied when drawn)
-
-    // Grandstand on the outside (right) of the longest straight-ish stretch after the line.
-    float bestLen = 0, bestS = 0;
-    for (float s = 0; s < tr.length(); s += 10) {
-        float len = 0;
-        while (len < 400 && std::fabs(tr.at(tr.indexAt(s + len)).curvature) < 1.0f / 800.0f) len += 5;
-        if (len > bestLen) { bestLen = len; bestS = s; }
-    }
-    if (bestLen >= 120) {
-        float standLen = std::min(220.0f, bestLen - 40);
-        float mid = bestS + bestLen * 0.5f;
-        const auto& sm = tr.at(tr.indexAt(mid));
-        float base = sm.halfWidth + tr.runoff() + 3.0f;
-        for (int k = 0; k < 7; ++k) {
-            float h = 0.9f * (k + 1);
-            Color seat = (k % 2) ? Color{40, 62, 130, 255} : Color{190, 192, 198, 255};
-            boxes_.push_back({W(sm.p - sm.n * (base + 1.6f * k + 0.8f), h * 0.5f), {standLen, h, 1.6f}, seat});
-        }
-        boxes_.push_back({W(sm.p - sm.n * (base + 6.0f), 11.0f), {standLen + 6, 0.4f, 14.0f}, {225, 225, 228, 255}});
-        for (int k = 0; k <= 4; ++k) {
-            float along = -standLen * 0.5f + standLen * k / 4.0f;
-            boxes_.push_back({W(sm.p + sm.t * along - sm.n * (base + 12.5f), 5.5f), {0.5f, 11.0f, 0.5f}, gantry});
-        }
-        // remember the stand's heading for drawing (all stand boxes share it)
-    }
-
-    // Trees scattered away from the track.
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> U(0, 1);
-    float half = trackExtent_ * 0.5f + 250.0f;
-    int attempts = 0;
-    while (trees_.size() < 420 && attempts++ < 6000) {
-        Vec2 p = {trackCenter_.x + (U(rng) * 2 - 1) * half, -trackCenter_.z + (U(rng) * 2 - 1) * half};
-        rr::TrackLoc loc = tr.locateGlobal(p);
-        if (std::fabs(loc.lateral) < loc.halfWidth + tr.runoff() + 9.0f) continue;
-        // keep clear of the grandstand roof
-        bool clash = false;
-        for (const auto& b : boxes_)
-            if (Vector2Distance({b.center.x, b.center.z}, {p.x, -p.y}) < b.size.x * 0.5f + 10.0f && b.size.x > 50) clash = true;
-        if (clash) continue;
-        trees_.push_back({W(p), 0.8f + 0.7f * U(rng), U(rng)});
-    }
-
-    // TV camera spots on the outside of the bends every ~250 m.
-    for (float s = 0; s < tr.length(); s += 250) {
-        const auto& sm = tr.at(tr.indexAt(s));
-        float side = sm.curvature > 0 ? -1.0f : 1.0f;
-        tvSpots_.push_back(W(sm.p + sm.n * (side * (sm.halfWidth + tr.runoff() + 8.0f)), 6.0f));
-    }
-    standYaw_ = 0;
-    if (bestLen >= 120) {
-        const auto& sm = tr.at(tr.indexAt(bestS + bestLen * 0.5f));
-        standYaw_ = std::atan2(sm.t.y, sm.t.x);
-    }
-    gantryYaw_ = yaw0;
-    numGantryBoxes_ = 3;
 }
 
 // ---------------------------------------------------------------- camera
@@ -835,20 +837,8 @@ void Renderer::drawScene(const rr::Race& race, bool shadowPass) {
     }
     drawModel(mdlWalls_, I, WHITE);
 
-    for (size_t i = 0; i < boxes_.size(); ++i) {
-        const Box& b = boxes_[i];
-        float yaw = (int)i < numGantryBoxes_ ? gantryYaw_ : standYaw_;
-        drawModel(mdlCube_, boxTransform(b.center, b.size, yaw), b.color);
-    }
-
-    for (const Tree& t : trees_) {
-        float s = t.scale;
-        Color trunk = {92, 66, 45, 255};
-        Color leaf = {(unsigned char)(38 + 25 * t.tint), (unsigned char)(88 + 30 * t.tint), (unsigned char)(42 + 10 * t.tint), 255};
-        drawModel(mdlTrunk_, MatrixMultiply(MatrixScale(0.28f * s, 2.4f * s, 0.28f * s), MatrixTranslate(t.pos.x, 0, t.pos.z)), trunk);
-        drawModel(mdlCone_, MatrixMultiply(MatrixScale(2.4f * s, 5.0f * s, 2.4f * s), MatrixTranslate(t.pos.x, 1.6f * s, t.pos.z)), leaf);
-        drawModel(mdlCone_, MatrixMultiply(MatrixScale(1.7f * s, 3.8f * s, 1.7f * s), MatrixTranslate(t.pos.x, 3.9f * s, t.pos.z)), leaf);
-    }
+    drawProps(shadowPass);
+    drawTrees(shadowPass);
 
     const rr::Track& tr = race.track();
     if (tr.hasPit()) {
@@ -894,6 +884,8 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     sun.up = {0, 1, 0};
     sun.fovy = orthoSize;
     sun.projection = CAMERA_ORTHOGRAPHIC;
+    shadowCentre_ = centre;
+    shadowRadius_ = orthoSize * 0.75f;
 
     Matrix lightView, lightProj;
     rlSetClipPlanes(1.0, 800.0);  // tight depth range keeps the shadow bias small
@@ -913,10 +905,13 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     float camHeight = std::max(1.0f, camera.position.y);
     float fogDensity = 0.0016f * std::clamp(40.0f / camHeight, 0.08f, 1.0f);
     SetShaderValue(lit_, locFog_, &fogDensity, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(litInst_, GetShaderLocation(litInst_, "fogDensity"), &fogDensity, SHADER_UNIFORM_FLOAT);
     DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), kSkyTop, kSkyHorizon);
     BeginMode3D(camera);
     SetShaderValueMatrix(lit_, locLightVP_, lightVP_);
     SetShaderValue(lit_, locViewPos_, &camera.position, SHADER_UNIFORM_VEC3);
+    SetShaderValueMatrix(litInst_, GetShaderLocation(litInst_, "lightVP"), lightVP_);
+    SetShaderValue(litInst_, GetShaderLocation(litInst_, "viewPos"), &camera.position, SHADER_UNIFORM_VEC3);
     rlEnableShader(lit_.id);
     int slot = 10;
     rlActiveTextureSlot(slot);

@@ -47,6 +47,8 @@ bool Track::load(const std::string& path, std::string* err) {
         if (!(ss >> key)) continue;
         if (key == "name") {
             std::getline(ss >> std::ws, name_);
+        } else if (key == "scenery") {
+            ss >> scenery_;
         } else if (key == "width") {
             ss >> defaultWidth_;
         } else if (key == "runoff") {

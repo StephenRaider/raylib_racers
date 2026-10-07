@@ -41,6 +41,8 @@ public:
     bool build(const std::vector<Vec2>& ctrl, const std::vector<float>& widths, std::string* err);
 
     const std::string& name() const { return name_; }
+    // The viewer's scenery theme ("scenery forest" in the file; "" = the default mix).
+    const std::string& scenery() const { return scenery_; }
     float length() const { return length_; }
     float runoff() const { return runoff_; }
     float spacing() const { return ds_; }
@@ -99,6 +101,7 @@ private:
     std::vector<int> gridItems_;
 
     std::string name_ = "unnamed";
+    std::string scenery_;
     RRPitInfo pitCfg_{};
     float defaultWidth_ = 14;
     float runoff_ = 6;

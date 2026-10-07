@@ -32,7 +32,9 @@ public:
 
 private:
     void buildTrack(const rr::Track& track);
-    void buildScenery(const rr::Track& track, unsigned seed);
+    void buildScenery(const rr::Track& track, unsigned seed);  // scenery.cpp
+    void drawProps(bool shadowPass);
+    void drawTrees(bool shadowPass);  // scenery.cpp
     void drawScene(const rr::Race& race, bool shadowPass);
     void drawCar(const rr::Car& car, int index);
     void drawBoxCar(const rr::Car& car, int index);
@@ -43,6 +45,7 @@ private:
     Shader lit_{};
     Shader depth_{};
     Shader* current_ = nullptr;
+    Shader litInst_{}, depthInst_{};  // instanced versions, for the trees
     int locLightVP_ = -1, locShadowMap_ = -1, locViewPos_ = -1, locSpec_ = -1, locFog_ = -1;
     RenderTexture2D shadowMap_{};
     const int shadowRes_ = 2048;
@@ -50,16 +53,36 @@ private:
 
     Texture2D texAsphalt_{}, texGrass_{}, texChecker_{}, texWhite_{};
     Model mdlAsphalt_{}, mdlMarkings_{}, mdlWalls_{}, mdlGround_{}, mdlStart_{};
-    Model mdlCube_{}, mdlWheel_{}, mdlSphere_{}, mdlCone_{}, mdlTrunk_{};
+    Model mdlCube_{}, mdlWheel_{}, mdlSphere_{}, mdlCone_{}, mdlTrunk_{}, mdlPyramid_{};
     CarModel carModel_;
 
-    struct Tree { Vector3 pos; float scale; float tint; };
-    std::vector<Tree> trees_;
-    struct Box { Vector3 center, size; Color color; };
-    std::vector<Box> boxes_;  // static scenery; size is (along track, up, across)
-    int numGantryBoxes_ = 0;  // the first boxes use the start-line heading
-    float gantryYaw_ = 0, standYaw_ = 0;
+    // Static scenery, each prop one shape (or a tree made of a few). Boxes and spheres are
+    // centred on pos; cylinders, cones and pyramids stand on it. size is (along, up, across)
+    // before the prop is tilted about its long axis and turned by yaw.
+    enum PropKind : unsigned char { P_BOX, P_CYL, P_CONE, P_SPHERE, P_PYRAMID, P_ROOF, P_MOUND };
+    struct Prop {
+        PropKind kind;
+        Vector3 pos, size;
+        float yaw = 0, tilt = 0;
+        Color color{200, 200, 200, 255};
+        float radius = 1;  // for culling
+    };
+    std::vector<Prop> props_;
+    // Trees: instanced parts, grouped in square tiles so whole tiles are culled at once.
+    enum TreePart { TP_TRUNK, TP_CONE, TP_BLOB, TP_FROND, TP_BLOB2, TP_COUNT };  // BLOB2: a second, smaller blob
+    struct TreeTile {
+        Vector3 centre{};
+        float radius = 0;
+        std::vector<Matrix> parts[TP_COUNT];  // colour in m3, m7, m11
+    };
+    std::vector<TreeTile> treeTiles_;
+    std::vector<Matrix> treeBatch_[TP_COUNT];  // per-frame gather of the visible tiles
+    Mesh treeMesh_[TP_COUNT]{};
+    Material treeMat_{};
+    std::string theme_;  // the track's scenery theme
     std::vector<Vector3> tvSpots_;
+    Vector3 shadowCentre_{};
+    float shadowRadius_ = 400;
 
     // camera state
     Vector3 chasePos_{}, chaseTarget_{};
