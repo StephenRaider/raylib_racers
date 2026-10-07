@@ -65,6 +65,38 @@ static inline float rr_follow_speed(const RRSensors* in, float myLat, float lane
     return cap;
 }
 
+/* Speed cap for a crawling, stopped or rejoining car ahead (a spin, an off,
+ * a car limping back on): unlike a car we follow, it may be far slower than
+ * us and moving across the track, so it is seen from braking distance away,
+ * on a wider path, and we brake to pass it at a safe speed. myLat is our
+ * lateral now, laneLat where we are heading, decel what we can brake at
+ * (m/s^2). Returns a large number when nothing is in the way. */
+static inline float rr_hazard_speed(const RRSensors* in, float myLat, float laneLat, float v, float decel) {
+    float cap = 1e9f;
+    if (decel < 1.0f) decel = 1.0f;
+    for (int k = 0; k < in->num_nearby; ++k) {
+        const RROpponent* o = &in->nearby[k];
+        if (o->ds <= 0) continue;
+        if (o->pit_state != RR_PIT_NONE && in->pit_state == RR_PIT_NONE) continue;
+        const float along = o->speed * cosf(o->rel_yaw);  /* their speed down the track */
+        const int slow = along < 0.6f * v && v - along > 12.0f;
+        const int across = fabsf(sinf(o->rel_yaw)) > 0.35f;  /* sideways: spun or rejoining */
+        if (!slow && !across) continue;
+        const float reach = 30.0f + (v * v - along * along) / (2.0f * decel) * 1.3f;
+        if (o->ds > reach) continue;
+        /* a sideways car may cross our path; a slow one only blocks its own lane */
+        const float lo = fminf(myLat, laneLat), hi = fmaxf(myLat, laneLat);
+        const float pad = across ? 4.5f : 3.0f;
+        if (o->lateral < lo - pad || o->lateral > hi + pad) continue;
+        /* pass it no faster than this: close to its speed when it is in our lane */
+        const float passV = fmaxf(along, 0.0f) + (fabsf(o->lateral - laneLat) > 2.6f && !across ? 15.0f : 4.0f);
+        const float room = fmaxf(0.0f, o->ds - 8.0f);
+        const float vMax = sqrtf(passV * passV + 2.0f * decel * room);
+        if (vMax < cap) cap = vMax;
+    }
+    return cap;
+}
+
 /* --------------------------------------------------------------- blue flag */
 
 /* Under a blue flag: give the lapping car room. Picks the side away from it

@@ -117,6 +117,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     float vTarget = (16.0f + std::sqrt(2.0f * 9.0f * rr_stopping_factor(in) * d)) * g->speedScale;
     vTarget *= 1.0f - 0.35f * std::fabs(out->steer);
     vTarget = std::min(vTarget * blue, rr_follow_speed(in, myLat, myLat, in->speed_x, 7.0f));
+    vTarget = std::min(vTarget, rr_hazard_speed(in, myLat, myLat, in->speed_x, 14.0f * rr_stopping_factor(in)));
 
     float err = vTarget - in->speed_x;
     if (err > 0) {

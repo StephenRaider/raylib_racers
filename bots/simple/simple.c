@@ -68,6 +68,8 @@ static void drive(void* self, const RRSensors* in, RRControl* out) {
     {
         float follow = rr_follow_speed(in, myLat, want, in->speed_x, 6.0f);
         if (follow < target) target = follow;
+        follow = rr_hazard_speed(in, myLat, want, in->speed_x, 10.0f * rr_stopping_factor(in));
+        if (follow < target) target = follow;
     }
 
     float err = target - in->speed_x;
