@@ -430,12 +430,12 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         if (tr.hasPit()) {
             const RRPitInfo& p = tr.pit();
             const float len = std::fmod(p.lane_end_s - p.lane_start_s + tr.length(), tr.length());
-            const auto& sm = sample(p.lane_start_s + len * 0.5f);
-            const float yaw = yawOf(sm.t);
             const float n = std::max(4.0f, (len - 40) / 12);
             for (int k = 0; k < (int)n; ++k) {
-                const float a = -(len - 40) * 0.5f + 12 * k;
-                const Vec2 q = sm.p + sm.t * a + sm.n * (p.side * (sm.halfWidth + 26.0f));
+                // each panel follows the lane, so a curved lane doesn't bend into the boxes
+                const auto& sm = sample(p.lane_start_s + 20 + 12 * k + 6);
+                const float yaw = yawOf(sm.t);
+                const Vec2 q = sm.p + sm.n * (p.side * (sm.halfWidth + 26.0f));
                 add(P_BOX, W(q, 10 + 2.5f * std::sin(k * 0.45f)), {12.4f, 0.6f, 22.0f}, yaw, {235, 236, 240, 255},
                     0.12f * std::cos(k * 0.45f));
                 add(P_BOX, W(q, 4.5f), {12.0f, 9.0f, 16.0f}, yaw, {200, 205, 212, 255});
