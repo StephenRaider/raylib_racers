@@ -129,6 +129,7 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         text(p, (GetScreenWidth() - w) / 2, GetScreenHeight() * 0.2f, 44, kText, true);
     }
     if (results) drawResults(race, st);
+    else resultTabs_.clear(), resultRows_.clear(), resultsBox_ = {};
     if (race.isOver() && !st.notice.empty()) {
         const float w = width(st.notice.c_str(), 17, true) + 44;
         Rectangle r = {(GetScreenWidth() - w) / 2, GetScreenHeight() - 96.0f, w, 42};
@@ -160,6 +161,7 @@ static const float kTowerX = 16, kTowerW = 400, kTowerRowH = 28, kTowerTop = 112
 
 int Hud::towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const {
     if (!st.showHud || st.qualifying) return -1;
+    if (race.isOver() && st.showResults) return -1;  // hidden under the race-end window
     if (p.x < kTowerX || p.x > kTowerX + kTowerW || p.y < kTowerTop - 3) return -1;
     const int row = (int)((p.y - (kTowerTop - 3)) / kTowerRowH);
     return row < (int)race.order().size() ? race.order()[row] : -1;

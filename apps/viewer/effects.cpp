@@ -105,7 +105,10 @@ void Effects::update(const rr::Race& race, float dt) {
                 }
             }
         }
-        if (level_ >= 2 && !c.onTrack && speed > 6) {
+        // dust off the grass and gravel, not off the paved pit entry and exit
+        const rr::Track& tr = race.track();
+        if (level_ >= 2 && !c.onTrack && speed > 6 &&
+            !tr.paved(c.trackS, c.lateral, tr.at(tr.indexAt(c.trackS)).halfWidth)) {
             Vector3 v = W(c.state.velWorld());
             emit(1, Vector3Lerp(now[2], now[3], 0.5f), v, 2);
         }

@@ -78,8 +78,17 @@ int Hud::resultsTabAt(Vector2 p) const {
     return -1;
 }
 
+int Hud::resultsCarAt(Vector2 p, bool* inside) const {
+    *inside = resultsBox_.width > 0 && CheckCollisionPointRec(p, resultsBox_);
+    for (const RowHit& h : resultRows_)
+        if (CheckCollisionPointRec(p, h.r)) return h.car;
+    return -1;
+}
+
 void Hud::drawResults(const rr::Race& race, const HudState& st) {
     resultTabs_.clear();
+    resultRows_.clear();
+    resultsBox_ = {};
     if (!st.showResults || race.order().empty()) return;
     const auto& order = race.order();
     const auto& cars = race.cars();
@@ -120,11 +129,13 @@ void Hud::drawResults(const rr::Race& race, const HudState& st) {
     const float top = y + 98, left = x + 24, right = x + w - 24;
     const float bodyBottom = y + h - (st.logPath.empty() ? 14 : 36);
     auto rowY = [&](int p) { return top + 24 + p * rowH; };
+    resultsBox_ = {x, y, w, h};
     auto nameCell = [&](int p, int car, float nx) {
         std::snprintf(buf, sizeof buf, "%d", p + 1);
         textRight(buf, nx, rowY(p), 18, kText, true);
         DrawRectangle((int)nx + 10, (int)rowY(p) + 2, 5, (int)rowH - 8, teamColor(car));
         text(cars[car].name.c_str(), nx + 24, rowY(p), 18, car == st.focus ? kAccent : kText);
+        resultRows_.push_back({{left, rowY(p) - 3, right - left, rowH}, car});
     };
     auto header = [&](const char* s, float hx, bool alignRight = false) {
         if (alignRight) textRight(s, hx, top, 13, kFaint, true);
@@ -272,6 +283,7 @@ void Hud::drawResults(const rr::Race& race, const HudState& st) {
                 const float ly = P(0, (float)(p + 1)).y - 8;
                 DrawRectangle((int)(pr.x + pr.width + 14), (int)ly + 2, 4, 13, teamColor(i));
                 text(cars[i].name.c_str(), pr.x + pr.width + 24, ly, n > 16 ? 13 : 15, i == st.focus ? kAccent : kText);
+                resultRows_.push_back({{pr.x + pr.width + 10, ly - 2, right - (pr.x + pr.width + 10), n > 16 ? 16.0f : 18.0f}, i});
             }
             textRight("Left / Right or 1-9 pick a car", right, bodyBottom - 14, 13, kDim);
             break;
