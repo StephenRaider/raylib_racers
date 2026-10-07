@@ -572,7 +572,9 @@ int main(int argc, char** argv) {
 
     // ---- weekend: qualifying runs one car at a time, then the race starts in that order
     enum class Phase { Race, Quali, QualiDone, Test } phase = Phase::Race;
-    const rr::Race* lightsFor = nullptr;  // the race the start lights were shown for
+    const rr::Race* lightsFor = nullptr;
+    bool wasInMenu = false;
+    double menuQuietUntil = 0;  // the race the start lights were shown for
     const rr::Race* loggedRace = nullptr;  // the race whose log has been written
     std::vector<rr::EntrySpec> weekendEntries;
     std::vector<int> weekendSlots, weekendIds;  // each entry's livery and championship driver id
@@ -1000,9 +1002,14 @@ int main(int argc, char** argv) {
         const float frameDt = std::min(GetFrameTime(), 0.1f);
         const int n = (int)race->cars().size();
 
+        if (!inMenu) wasInMenu = false;
         if (inMenu) {
             // ---- race setup
-            MenuAction act = updateMenu(menu, menuHits);
+            // Ignore input for a moment after the menu opens, so a key or click still held from
+            // launching the viewer or leaving a race can't start one.
+            if (!wasInMenu) menuQuietUntil = GetTime() + 0.4;
+            wasInMenu = true;
+            MenuAction act = GetTime() < menuQuietUntil ? MenuAction::None : updateMenu(menu, menuHits);
             if (menu.testing()) refreshTesting();
             if (act == MenuAction::Quit) quit = true;
             if (act == MenuAction::LoadRun) loadSetup(menu.runPick);
