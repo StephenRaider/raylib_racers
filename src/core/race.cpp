@@ -417,6 +417,10 @@ void Race::updateBlueFlags() {
         if (c.blueHeld > RR_BLUE_FLAG_LIMIT) {
             c.penalties++;
             c.penaltyTime += RR_BLUE_FLAG_PENALTY;
+            char why[160];
+            std::snprintf(why, sizeof why, "blue flag: held up %s (lapping it) for over %.0f s",
+                          cars_[c.blueCar].name.c_str(), (double)RR_BLUE_FLAG_LIMIT);
+            c.penaltyLog.push_back({time_, c.currentLap(cfg_.laps), RR_BLUE_FLAG_PENALTY, why});
             c.blueHeld = -1e9f;  // one penalty per car held up
         }
     }
@@ -600,6 +604,15 @@ void Race::updateProgress(Car& c) {
         float lt = (float)(time_ - c.lapStart);
         c.lapTimes.push_back(lt);
         c.lapPositions.push_back(c.position);
+        Car::LapTemps lt2;
+        for (int k = 0; k < 2; ++k) {
+            lt2.avg[k] = c.tempN ? (float)(c.tempSum[k] / c.tempN) : c.state.tireTemp[k];
+            lt2.max[k] = c.tempN ? c.tempMax[k] : c.state.tireTemp[k];
+            c.tempSum[k] = 0;
+            c.tempMax[k] = 0;
+        }
+        c.tempN = 0;
+        c.lapTemps.push_back(lt2);
         if (c.bestLap <= 0 || lt < c.bestLap) c.bestLap = lt;
         c.lapStart = time_;
         c.lapsDone++;
@@ -611,6 +624,8 @@ void Race::updateProgress(Car& c) {
                 c.penalties++;
                 c.penaltyTime += RR_TWO_COMPOUND_PENALTY;
                 c.twoCompoundPenalty = true;
+                c.penaltyLog.push_back({time_, c.lapsDone, RR_TWO_COMPOUND_PENALTY,
+                                        "two-compound rule: finished having raced only one tyre compound"});
             }
             if (leaderFinish_ < 0) leaderFinish_ = time_;
             break;
@@ -891,6 +906,13 @@ void Race::step() {
             }
         }
         stepCar(c.state, c.phys, in, (c.robotCfg.auto_gear != 0) || c.finished || over_, surf, rates, dt);
+        if (!c.finished && !c.dnf) {
+            for (int k = 0; k < 2; ++k) {
+                c.tempSum[k] += c.state.tireTemp[k];
+                c.tempMax[k] = std::max(c.tempMax[k], c.state.tireTemp[k]);
+            }
+            ++c.tempN;
+        }
         if (c.pitState == RR_PIT_SERVICE || c.parked) {
             c.state.vx = c.state.vy = c.state.yawRate = 0;
         }
@@ -976,6 +998,18 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
         for (size_t k = 0; k < c.lapTimes.size(); ++k) std::fprintf(f, "%s%.3f", k ? ", " : "", c.lapTimes[k]);
         std::fprintf(f, "], \"lap_positions\": [");
         for (size_t k = 0; k < c.lapPositions.size(); ++k) std::fprintf(f, "%s%d", k ? ", " : "", c.lapPositions[k]);
+        std::fprintf(f, "], \"lap_tire_temps\": [");
+        for (size_t k = 0; k < c.lapTemps.size(); ++k) {
+            const Car::LapTemps& t = c.lapTemps[k];
+            std::fprintf(f, "%s{\"lap\": %zu, \"front_avg\": %.1f, \"rear_avg\": %.1f, \"front_max\": %.1f, \"rear_max\": %.1f}",
+                         k ? ", " : "", k + 1, t.avg[0], t.avg[1], t.max[0], t.max[1]);
+        }
+        std::fprintf(f, "], \"penalty_log\": [");
+        for (size_t k = 0; k < c.penaltyLog.size(); ++k) {
+            const Car::PenaltyLog& pl = c.penaltyLog[k];
+            std::fprintf(f, "%s{\"time\": %.2f, \"lap\": %d, \"seconds\": %.1f, \"reason\": \"%s\"}", k ? ", " : "", pl.time,
+                         pl.lap, pl.seconds, jsonEscape(pl.reason).c_str());
+        }
         std::fprintf(f, "], \"stops\": [");
         static const char* tyre[] = {"", "soft", "medium", "hard"};
         for (size_t k = 0; k < c.stopLog.size(); ++k) {

@@ -494,7 +494,11 @@ void strategy(RacingLine& r, const RRSensors* in) {
         }
         if (!o.pit_tires) o.pit_tires = RR_TIRE_MEDIUM;
     }
-    o.pit_repair = in->damage > 1500.0f;
+    // A repair adds only RR_PIT_REPAIR_PER_1000 s per 1000 damage to a stop that is
+    // happening anyway: fix whatever would cost more than that by the flag, so the
+    // car does not have to come back in a few laps later just for repairs.
+    const float repairExtra = m.serviceScale * RR_PIT_REPAIR_PER_1000 * in->damage / 1000.0f;
+    o.pit_repair = in->damage > 0 && dmgLossPerLap * toGo / r.L > repairExtra;
     r.order = o;
     r.mode = PIT_IN;
     r.lastService = m.serviceTime(o.pit_fuel, o.pit_tires != 0);

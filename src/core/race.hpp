@@ -71,6 +71,21 @@ struct Car {
     };
     std::vector<StopLog> stopLog;
     std::vector<int> lapPositions;  // race position at the end of each lap
+    struct PenaltyLog {
+        double time = 0;
+        int lap = 0;
+        float seconds = 0;
+        std::string reason;
+    };
+    std::vector<PenaltyLog> penaltyLog;
+    // Tyre temperatures over each completed lap: average and peak, front and rear (C).
+    struct LapTemps {
+        float avg[2] = {0, 0}, max[2] = {0, 0};
+    };
+    std::vector<LapTemps> lapTemps;
+    double tempSum[2] = {0, 0};
+    float tempMax[2] = {0, 0};
+    long tempN = 0;
     float noFuelTime = 0;
 
     // blue flags and penalties
