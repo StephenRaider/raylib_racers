@@ -177,7 +177,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         const TreeModel* model = nullptr;
         float height = 0;
         if (k == CONIFER) model = pick("tree"), height = R(12, 15) * s;
-        if (k == BROADLEAF && th != "tropical") model = pick("tree"), height = R(9, 12) * s;
+        if (k == BROADLEAF) model = pick("tree"), height = R(9, 12) * s;
         if (k == BUSH) model = pick("bush"), height = R(1.6f, 2.4f) * s;
         if (model) {
             const Matrix M = MatrixMultiply(MatrixMultiply(MatrixScale(height, height, height), MatrixRotateY(yaw)), T);
