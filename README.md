@@ -88,7 +88,10 @@ apply it.
 its position at the end of each lap (`lap_positions`) and a `stops` entry per
 pit stop: lap, fuel before and added, tyre wear and compound before and after,
 damage, whether it was repaired, service time and the algorithm's stated
-reason (`box (plan)`, `box (undercut)`, `box (fuel)`, `box (damage)`...). The
+reason (`box (plan)`, `box (undercut)`, `box (fuel)`, `box (damage)`...),
+average and peak tyre temperatures front and rear for every lap
+(`lap_tire_temps`) and each penalty with its lap, seconds and reason
+(`penalty_log`). The
 viewer writes the same log when a race ends, to `race_logs/` next to
 `rr_viewer` (or to `--json FILE`), and shows the path on the results screen.
 

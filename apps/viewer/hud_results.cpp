@@ -389,9 +389,30 @@ void Hud::drawResults(const rr::Race& race, const HudState& st) {
             // the hardest contacts of the race
             const float cx = left + 770;
             text("HARDEST CONTACTS", cx, top, 13, kFaint, true);
+            // penalties (with why) take the bottom of the column
+            std::vector<std::string> pens;
+            for (int p = 0; p < n; ++p)
+                for (const auto& pl : cars[order[p]].penaltyLog) {
+                    // the log has the full reason; here its kind ("blue flag", "two-compound rule")
+                    const std::string kind = pl.reason.substr(0, pl.reason.find(':'));
+                    std::snprintf(buf, sizeof buf, "%s   lap %d   +%.0f s   %s", cars[order[p]].name.c_str(), pl.lap, pl.seconds,
+                                  kind.c_str());
+                    pens.push_back(buf);
+                }
+            const int penRows = std::min<int>((int)pens.size(), 5);
+            const float penTop = bodyBottom - 6 - (penRows ? 22 + penRows * 18.0f : 0);
+            if (penRows) {
+                text("PENALTIES", cx, penTop, 13, kFaint, true);
+                for (int k = 0; k < penRows; ++k) {
+                    std::string line = k == 4 && pens.size() > 5 ? "... and " + std::to_string(pens.size() - 4) + " more" : pens[k];
+                    float size = 14;
+                    while (size > 10 && width(line.c_str(), size) > right - cx) size -= 1;
+                    text(line.c_str(), cx, penTop + 20 + k * 18, size, kBad);
+                }
+            }
             std::vector<rr::Contact> hits = race.contacts();
             std::sort(hits.begin(), hits.end(), [](const rr::Contact& a, const rr::Contact& b) { return a.speed > b.speed; });
-            const int rows = std::min((int)hits.size(), std::max(0, (int)((bodyBottom - top - 30) / rowH)));
+            const int rows = std::min((int)hits.size(), std::max(0, (int)((penTop - top - 30) / rowH)));
             if (hits.empty()) text("a clean race: no contact at all", cx, top + 24, 16, kDim);
             for (int k = 0; k < rows; ++k) {
                 const rr::Contact& h = hits[k];
