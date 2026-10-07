@@ -3,12 +3,16 @@
 // simple shapes and placed from the track's seed, so a track always looks the same.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <random>
 #include <unordered_map>
 
+#include "mini_json.hpp"
+
 #include "renderer.hpp"
 #include "raymath.h"
+#include "rlgl.h"
 
 using rr::Vec2;
 
@@ -142,12 +146,13 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     enum TreeKind { CONIFER, BROADLEAF, PALM, BUSH };
     const float tileSize = 300;
     std::unordered_map<long long, int> tileOf;
-    auto part = [&](TreePart k, Vector3 at, const Matrix& M, Color c) {
+    auto part = [&](int k, Vector3 at, const Matrix& M, Color c) {
         const long long key = ((long long)std::floor(at.x / tileSize) << 32) ^ (unsigned)(int)std::floor(at.z / tileSize);
         auto it = tileOf.find(key);
         if (it == tileOf.end()) {
             it = tileOf.emplace(key, (int)treeTiles_.size()).first;
             treeTiles_.emplace_back();
+            treeTiles_.back().parts.resize(treeSlots());
         }
         Matrix m = M;
         m.m3 = c.r / 255.0f, m.m7 = c.g / 255.0f, m.m11 = c.b / 255.0f;
@@ -159,6 +164,30 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         auto at = [&](float x, float y, float z, float sx, float sy, float sz) {
             return MatrixMultiply(MatrixScale(sx, sy, sz), MatrixMultiply(MatrixTranslate(x, y, z), T));
         };
+        // a tree model when there are some: textured, the tint only shades it a little
+        auto pick = [&](const char* kind) -> const TreeModel* {
+            int n = 0;
+            for (const TreeModel& m : treeModels_) n += m.kind == kind;
+            if (n == 0) return nullptr;
+            int i = (int)R(0, (float)n - 0.001f);
+            for (const TreeModel& m : treeModels_)
+                if (m.kind == kind && i-- == 0) return &m;
+            return nullptr;
+        };
+        const TreeModel* model = nullptr;
+        float height = 0;
+        if (k == CONIFER) model = pick("tree"), height = R(12, 15) * s;
+        if (k == BROADLEAF && th != "tropical") model = pick("tree"), height = R(9, 12) * s;
+        if (k == BUSH) model = pick("bush"), height = R(1.6f, 2.4f) * s;
+        if (model) {
+            const Matrix M = MatrixMultiply(MatrixMultiply(MatrixScale(height, height, height), MatrixRotateY(yaw)), T);
+            const float v = R(0.85f, 1.05f);
+            const Color tint = mix({(unsigned char)(235 * v), (unsigned char)(240 * v), (unsigned char)(235 * v), 255},
+                                   {(unsigned char)std::min(255, leaf.r * 3), (unsigned char)std::min(255, leaf.g * 2),
+                                    (unsigned char)std::min(255, leaf.b * 3), 255}, 0.2f);
+            for (int slot : model->slots) part(slot, base, M, tint);
+            return;
+        }
         const Color bark = mix({92, 66, 45, 255}, {70, 56, 44, 255}, R(0, 1));
         switch (k) {
             case CONIFER: {
@@ -586,6 +615,7 @@ void Renderer::drawProps(bool shadowPass) {
 void Renderer::drawTrees(bool shadowPass) {
     const Vector3 cam = camera.position;
     const Vector3 fwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    treeBatch_.resize(treeSlots());
     for (auto& b : treeBatch_) b.clear();
     for (const TreeTile& t : treeTiles_) {
         if (shadowPass) {
@@ -599,12 +629,61 @@ void Renderer::drawTrees(bool shadowPass) {
         }
         // far away, the trunks and the smaller clumps of leaves are left out
         const bool far = !shadowPass && Vector3Distance(t.centre, cam) > 900 + t.radius;
-        for (int k = 0; k < TP_COUNT; ++k) {
+        for (int k = 0; k < (int)t.parts.size(); ++k) {
             if (far && (k == TP_TRUNK || k == TP_BLOB2)) continue;
             treeBatch_[k].insert(treeBatch_[k].end(), t.parts[k].begin(), t.parts[k].end());
         }
     }
     treeMat_.shader = shadowPass ? depthInst_ : litInst_;
-    for (int k = 0; k < TP_COUNT; ++k)
-        if (!treeBatch_[k].empty()) DrawMeshInstanced(treeMesh_[k == TP_BLOB2 ? TP_BLOB : k], treeMat_, treeBatch_[k].data(), (int)treeBatch_[k].size());
+    const unsigned whiteTex = rlGetTextureIdDefault();
+    rlDisableBackfaceCulling();  // leaf cards are seen from both sides
+    for (int k = 0; k < treeSlots(); ++k) {
+        if (treeBatch_[k].empty()) continue;
+        const bool model = k >= TP_COUNT;
+        treeMat_.maps[MATERIAL_MAP_DIFFUSE].texture =
+            model ? slotTex_[k - TP_COUNT] : Texture2D{whiteTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+        const Mesh& mesh = model ? slotMesh_[k - TP_COUNT] : treeMesh_[k == TP_BLOB2 ? TP_BLOB : k];
+        DrawMeshInstanced(mesh, treeMat_, treeBatch_[k].data(), (int)treeBatch_[k].size());
+    }
+    rlEnableBackfaceCulling();
+    treeMat_.maps[MATERIAL_MAP_DIFFUSE].texture = Texture2D{whiteTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+}
+
+// The tree models in assetsDir/scenery/trees (tools/import_trees.py). Without them the
+// scenery falls back to trees built from simple shapes.
+void Renderer::loadTrees(const std::string& assetsDir) {
+    const std::string dir = assetsDir + "/scenery/trees/";
+    char* text = assetsDir.empty() ? nullptr : LoadFileText((dir + "trees.json").c_str());
+    if (!text) return;
+    const mjson::Value root = mjson::parse(text);
+    UnloadFileText(text);
+    std::vector<std::string> texNames;
+    const mjson::Value& vs = root["variants"];
+    for (size_t i = 0; i < vs.size(); ++i) {
+        TreeModel tm;
+        tm.kind = vs[i]["kind"].str();
+        const mjson::Value& parts = vs[i]["parts"];
+        for (size_t j = 0; j < parts.size(); ++j) {
+            Model m = LoadModel((dir + parts[j]["mesh"].str()).c_str());
+            if (m.meshCount < 1) continue;
+            // keep the mesh, drop the model's own material
+            slotMesh_.push_back(m.meshes[0]);
+            m.meshCount = 0;
+            MemFree(m.meshes);
+            m.meshes = nullptr;
+            UnloadModel(m);
+            const std::string tn = parts[j]["texture"].str();
+            size_t t = std::find(texNames.begin(), texNames.end(), tn) - texNames.begin();
+            if (t == texNames.size()) {
+                Texture2D tex = LoadTexture((dir + tn).c_str());
+                GenTextureMipmaps(&tex);
+                SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
+                texNames.push_back(tn);
+                treeTextures_.push_back(tex);
+            }
+            slotTex_.push_back(treeTextures_[t]);
+            tm.slots.push_back(TP_COUNT + (int)slotMesh_.size() - 1);
+        }
+        if (!tm.slots.empty()) treeModels_.push_back(tm);
+    }
 }
