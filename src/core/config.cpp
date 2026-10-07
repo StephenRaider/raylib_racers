@@ -53,6 +53,9 @@ std::string usage(const char* prog, bool viewer) {
              "  --lineup FILE          the teams, their stats and drivers for a new season\n"
              "  --rounds LIST          calendar of a new season, e.g. monza:10,spa:8 (default: the eight\n"
              "                         championship tracks at --laps)\n"
+             "  --distance KM          race length of a new season: each round gets the laps that\n"
+             "                         cover about KM on its track (instead of the laps in --rounds)\n"
+             "  --wear-rate X          one tyre wear rate for the whole season\n"
              "  --all-rounds           race every remaining round\n"
              "  --save-lineup FILE     save the --car entries as a lineup and exit\n";
     }
@@ -73,7 +76,7 @@ std::string usage(const char* prog, bool viewer) {
              "  --results N           race-end window: 1 results, 2 positions, 3 lap chart, 4 lap times,\n"
              "                        5 strategy, 6 incidents\n"
              "  --scrub SECONDS       testing screen: show that moment of the run (for screenshots)\n"
-             "  --page grid|stats|runs  open a setup page (for screenshots)\n"
+             "  --page grid|stats|runs|champ|season|lineups  open a setup page (for screenshots)\n"
              "Keys: Tab/Left/Right focus car, L follow leader, C or F2-F8 camera, Space pause, +/- speed, M mute, R restart, Esc menu, H HUD, F1 help\n";
     }
     return u;
@@ -135,6 +138,7 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (!viewer && a == "--championship") cfg.championship = need(i, a);
             else if (!viewer && a == "--lineup") cfg.lineup = need(i, a);
             else if (!viewer && a == "--rounds") cfg.rounds = need(i, a);
+            else if (!viewer && a == "--distance") cfg.distance = std::stof(need(i, a));
             else if (!viewer && a == "--all-rounds") cfg.allRounds = true;
             else if (!viewer && a == "--save-lineup") cfg.saveLineup = need(i, a);
             else if (viewer && a == "--width") cfg.width = std::stoi(need(i, a));

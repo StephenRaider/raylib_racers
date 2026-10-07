@@ -4,7 +4,9 @@
 #include <string>
 #include <vector>
 
+#include "championship.hpp"
 #include "test_figures.hpp"
+#include "vec2.hpp"
 
 // The race setup screen shown before each race: track, race length, tyre life and
 // number of cars. Tyre life is chosen in laps; the menu turns it into a wear rate
@@ -17,6 +19,7 @@ struct TrackStats {
     float fuelPerLap = 2.3f;   // l
     float wearPerLap = 0.03f;  // medium tyres at wear rate 1, the faster-wearing axle
     bool measured = false;
+    std::vector<rr::Vec2> outline;  // centreline, ~150 points (menu thumbnails)
 };
 
 // A driving algorithm the grid page offers: a robot library and its parameters.
@@ -88,17 +91,72 @@ struct MenuState {
     static constexpr int kTyreLives[] = {3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 0};  // 0 = no wear
     static constexpr int kNumTyreLives = sizeof(kTyreLives) / sizeof(kTyreLives[0]);
     // Session: 0 race only, 1 weekend (qualifying, each car alone, sets the
-    // grid), 2 testing (one car alone, recorded for analysis).
+    // grid), 2 testing (one car alone, recorded for analysis), 3 championship.
     int session = 0;
+    static constexpr int kSessions = 4;
     bool weekend() const { return session == 1; }
     bool testing() const { return session == 2; }
+    bool champ() const { return session == 3; }
     int tyreRule = 0;      // two-compound rule: 0 automatic (races over 20 laps), 1 on, 2 off
 
     // The rows of the setup page depend on the session.
     enum class Row { Track, Laps, TyreLife, Teams, Drivers, Session, TyreRule, Grid, Stats, Start,
-                     TestCar, TestLivery, TestTyres, TestFuel, TestStats, TestRuns };
+                     TestCar, TestLivery, TestTyres, TestFuel, TestStats, TestRuns,
+                     SaveLineup, LoadLineup,
+                     ChampName, Round, AddRound, ChampDistance, ChampWear, ChampQuali, Season };
     std::vector<Row> rows() const;
-    int rowOf(Row r) const;  // index in rows(), -1 if not shown
+    int rowOf(Row r) const;     // index in rows(), -1 if not shown
+    int rowIndex(int row) const;  // which Round / Season a row is (rows of the same kind before it)
+
+    // ---- championship setup: the calendar and the rules for a new season
+    std::vector<rr::ChampRound> calendar;  // laps come from the distance and each track's length
+    int addTrack = 0;          // track the Add row adds
+    int champKm = 4;           // index into kDistances
+    int champWear = 3;         // index into kWears
+    bool champQuali = true;
+    std::string champName = "Season 1";
+    static constexpr float kDistances[] = {15, 25, 40, 50, 75, 100, 150, 200, 305};  // km
+    static constexpr int kNumDistances = sizeof(kDistances) / sizeof(kDistances[0]);
+    static constexpr float kWears[] = {0, 0.5f, 0.75f, 1, 1.5f, 2, 3, 4, 6};          // x the normal wear
+    static constexpr int kNumWears = sizeof(kWears) / sizeof(kWears[0]);
+    float champDistance() const { return kDistances[champKm]; }
+    float champWearRate() const { return kWears[champWear]; }
+    const TrackStats* trackStats(const std::string& file) const;
+    int roundLaps(const rr::ChampRound& r) const;  // from the distance
+    // Laps a compound lasts on a track at the season's wear rate (0 = no wear).
+    float compoundLaps(const std::string& file, int compound, float wearRate) const;
+    void resetCalendar();  // the eight championship tracks
+    // Saved seasons (championships/*.json), filled by the viewer.
+    struct SeasonLine {
+        std::string file, name, leader, next;
+        int done = 0, total = 0;
+    };
+    std::vector<SeasonLine> seasons;
+    int seasonPick = -1;  // the season a ContinueSeason action is for
+
+    // ---- the season page: standings, calendar, next round
+    bool seasonPage = false;
+    const rr::Championship* season = nullptr;  // set by the viewer while the page is open
+    int seasonTab = 0;   // 0 drivers, 1 constructors
+
+    // ---- lineups: save (name it) and load (pick one)
+    bool lineupSave = false, lineupLoad = false;
+    bool champNaming = false;         // typing the new season's name
+    bool typing() const { return lineupSave || champNaming; }
+    std::string inputText;            // the name being typed
+    std::vector<std::string> lineupFiles;  // names in lineups/, filled by the viewer
+    int lineupRow = 0;
+    std::string lineupPick;           // the lineup a LoadLineup action is for
+    std::string toast;                // a short message at the bottom of the menu
+    double toastUntil = 0;
+
+    // ---- a drop-down list: the target is a setup row, or a grid cell (100 + ...)
+    int popup = -1;
+    int popupSel = 0, popupTop = 0;
+    float popupX = 0, popupY = 0, popupW = 0;
+    std::vector<std::string> popupOptions() const;
+    void openPopup(int target, float x, float y, float w);
+    void choose(int target, int option);  // sets the value the popup was for
 
     // ---- testing: one car, its stats, tyres and fuel (0 = chosen for the run length)
     int testAlgo = 0, testLivery = 0, testTires = 0;
@@ -145,7 +203,9 @@ struct MenuState {
     int twoCompoundsArg() const { return tyreRule == 0 ? -1 : tyreRule == 1 ? 1 : 0; }  // RaceConfig::twoCompounds
 };
 
-enum class MenuAction { None, Start, Quit, TrackChanged, LoadRun, ViewRun };
+enum class MenuAction { None, Start, Quit, TrackChanged, LoadRun, ViewRun,
+                        SaveLineup, LoadLineup, ListLineups, NewSeason, ContinueSeason, StartRound, LeaveSeason,
+                        ChampTab };
 
 // Keyboard and mouse input for the menu. `hits` holds the clickable rectangles the
 // last draw produced (row arrows and the start button).
@@ -154,5 +214,11 @@ enum class MenuAction { None, Start, Quit, TrackChanged, LoadRun, ViewRun };
 // stats page, 3000 + line on the saved runs page; 99 is a page's Done button,
 // 98 / 97 load / replay a saved run, 96 / 95 its sort / track filter.
 // dir -1 / +1 = arrow, 0 = select.
-struct MenuHit { float x, y, w, h; int row; int dir; };
+// On the setup page, value >= 0 picks an option of a row (tabs, segmented
+// buttons) and dir 2 opens the row's drop-down list. 4000 + round * 4 + k:
+// remove / move up / move down a calendar round; 4500 + i continues saved season i;
+// 5000 + i picks drop-down option i (5999 closes it); 6000 / 6001 confirm / cancel
+// the name being typed; 6100 + i picks lineup i (6098 loads it, 6099 cancels);
+// 7000 / 7001 start the round / leave the season page, 7010 + k its tabs.
+struct MenuHit { float x, y, w, h; int row; int dir; int value = -1; };
 MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits);

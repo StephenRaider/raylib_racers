@@ -19,6 +19,7 @@ struct LineupDriver {
     std::string robot;   // name in bots/ or a path
     std::string params;
     int tires = 0;       // starting compound (RR_TIRE_*), 0 = the algorithm chooses
+    int livery = -1;     // the viewer's livery slot (-1 = the team's)
 };
 struct LineupTeam {
     std::string name;
@@ -74,14 +75,17 @@ struct Championship {
     Lineup lineup;
     std::vector<ChampRound> rounds;
     std::vector<RoundResult> results;  // one per round raced, in calendar order
-    // Rules, the same for every round.
-    int tyreLife = 0;         // laps a medium tyre lasts (viewer), 0 = use wearRate
+    // Rules, the same for every round. One tyre wear rate for the whole season: how many
+    // laps a tyre lasts then depends on the track.
     float wearRate = 1.0f;
+    float distanceKm = 0;     // > 0: each round's laps were set to cover about this distance
     int twoCompounds = -1;    // RaceConfig::twoCompounds
     bool qualifying = false;  // viewer: a qualifying session sets each grid
     uint64_t seed = 1;
 
     static int pointsFor(int position);  // 1-based; 0 outside the top ten
+    // Laps that cover about km on a track of this length (m), at least 1.
+    static int lapsFor(float km, float trackLength);
     // Circuit Raylib and the seven F1-inspired tracks.
     static std::vector<ChampRound> defaultCalendar(int laps);
     // "monza:10,spa:8" or "monza,spa" (laps from defLaps); empty = the default calendar.
@@ -93,8 +97,7 @@ struct Championship {
     // first round, then the championship order.
     std::vector<int> nextGrid() const;
     // The race config for the next round: base with this round's track, laps, cars
-    // (in grid order) and rules. Wear rate comes from wearRate; the viewer replaces it
-    // when tyreLife is set.
+    // (in grid order) and rules.
     RaceConfig roundConfig(const RaceConfig& base, const std::vector<int>& grid) const;
     // Records a finished race whose cars were entered in grid order.
     void record(const Race& race, const std::vector<int>& grid);

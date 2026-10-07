@@ -40,6 +40,7 @@ struct RaceConfig {
     std::string championship;
     std::string lineup;
     std::string rounds;
+    float distance = 0;        // km: each round's laps cover about this distance
     std::string saveLineup;    // write the --car entries as a lineup file
     bool allRounds = false;    // race every remaining round, not just the next one  // keep running after the flag until the cars have parked in the pit lane
 

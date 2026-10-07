@@ -62,6 +62,9 @@ std::string jsonEscape(const std::string& s) {
 
 }  // namespace
 
+std::string trackFile(const std::string& name, const std::vector<std::string>& dirs) { return findTrack(name, dirs); }
+
+
 Race::~Race() {
     for (auto& c : cars_) {
         if (c.robot && c.module && c.module->api()->destroy) c.module->api()->destroy(c.robot);

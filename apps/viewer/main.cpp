@@ -101,6 +101,8 @@ TrackStats calibrate(const std::string& track, const Paths& paths) {
     if (!r.setup(c, paths.bots, paths.tracks, &err)) return t;
     t.title = r.track().name();
     t.length = r.track().length();
+    const int step = std::max(1, r.track().size() / 150);
+    for (int i = 0; i < r.track().size(); i += step) t.outline.push_back(r.track().at(i).p);
     // fallbacks, scaled from the circuit, in case the robot does not finish
     const float k = t.length / 3176.0f;
     t.lapTime = 55 * k;
@@ -309,8 +311,11 @@ int main(int argc, char** argv) {
         if (!ts.measured) ts = calibrate(ts.file, paths);
     };
     if (inMenu) {
-        ensureStats();
+        // every track, for the drop-downs, the championship calendar and its thumbnails
+        for (TrackStats& t : menu.tracks)
+            if (!t.measured) t = calibrate(t.file, paths);
         menu.setWearRate(cfg.wearRate);
+        menu.resetCalendar();
     }
 
     auto race = makeRace(cfg, paths);
@@ -388,10 +393,172 @@ int main(int argc, char** argv) {
     };
     if (inMenu) applyMenu();
 
+    // ---- lineups: the grid, team stats included, saved by name in lineups/
+    const std::string lineupDir = dir + "/lineups", seasonDir = dir + "/championships";
+    auto fileName = [](std::string name) {
+        for (char& c : name)
+            if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') c = '_';
+        return name;
+    };
+    auto toast = [&](const std::string& msg) {
+        menu.toast = msg;
+        menu.toastUntil = GetTime() + 3.5;
+    };
+    auto menuLineup = [&](const std::string& name) {
+        rr::Lineup L;
+        L.name = name;
+        if (menu.teamSlots.empty()) {
+            L = rr::Lineup::fromEntries(gridEntries());
+            L.name = name;
+            return L;
+        }
+        const auto& table = liveryTable();
+        for (int t : menu.raceTeams()) {
+            rr::LineupTeam lt;
+            const int slot0 = menu.teamSlots[t][0];
+            lt.name = slot0 < (int)table.size() ? table[slot0].team : "Team " + std::to_string(L.teams.size() + 1);
+            lt.livery = slot0;
+            lt.stats = menu.statRules.format(menu.teamStats[t]);
+            for (int car = 0; car < menu.cars; ++car) {
+                if (menu.teamOfCar(car) != t) continue;
+                const Algorithm& a = menu.algos[menu.carAlgo[car]];
+                lt.drivers.push_back({a.label, a.robot, a.params, menu.carTires[car], menu.carLivery[car]});
+            }
+            L.teams.push_back(lt);
+        }
+        return L;
+    };
+    // Puts a lineup on the menu's grid: its teams, liveries, algorithms, tyres and stats.
+    auto applyLineup = [&](const rr::Lineup& L) {
+        if (menu.teamSlots.empty() || L.teams.empty()) return false;
+        int drivers = 1;
+        for (const auto& t : L.teams) drivers = std::max(drivers, (int)t.drivers.size());
+        menu.teams = std::min((int)L.teams.size(), (int)menu.teamSlots.size());
+        menu.drivers = std::min(drivers, 2);
+        menu.layoutGrid();
+        std::vector<int> grid = L.defaultGrid(), used;
+        int car = 0;
+        for (int id : grid) {
+            if (car >= menu.maxCars) break;
+            const rr::LineupDriver& d = L.driver(id);
+            const rr::LineupTeam& team = L.teams[L.teamOf(id)];
+            int slot = d.livery >= 0 && d.livery < menu.liveryCount ? d.livery : team.livery;
+            if (slot < 0 || slot >= menu.liveryCount || std::count(used.begin(), used.end(), slot)) {
+                slot = -1;  // keep the place layoutGrid gave
+                for (int s2 = 0; s2 < menu.liveryCount && slot < 0; ++s2)
+                    if (!std::count(used.begin(), used.end(), s2) && menu.slotTeam[s2] == menu.slotTeam[std::max(0, team.livery)]) slot = s2;
+                if (slot < 0) slot = menu.carLivery[car];
+            }
+            used.push_back(slot);
+            menu.carLivery[car] = slot;
+            int found = -1;
+            for (int a = 0; a < (int)menu.algos.size(); ++a)
+                if (menu.algos[a].robot == d.robot && menu.algos[a].params == d.params) found = a;
+            if (found < 0) {
+                menu.algos.push_back({d.name, d.robot, d.params});
+                found = (int)menu.algos.size() - 1;
+            }
+            menu.carAlgo[car] = found;
+            menu.carTires[car] = d.tires;
+            const int t = menu.slotTeam[slot];
+            if (t >= 0) menu.teamStats[t] = menu.statRules.parse(team.stats);
+            ++car;
+        }
+        menu.cars = car;
+        // the slots nobody races follow, so livery swaps still work
+        int k = car;
+        for (int s2 = 0; s2 < menu.liveryCount && k < (int)menu.carLivery.size(); ++s2)
+            if (!std::count(used.begin(), used.end(), s2)) menu.carLivery[k++] = s2;
+        menu.styleCar.clear();
+        return true;
+    };
+    auto listLineups = [&]() {
+        menu.lineupFiles.clear();
+        std::error_code ec;
+        for (const auto& e : std::filesystem::directory_iterator(lineupDir, ec))
+            if (e.path().extension() == ".json") menu.lineupFiles.push_back(e.path().stem().string());
+        std::sort(menu.lineupFiles.begin(), menu.lineupFiles.end());
+    };
+
+    // ---- championships: saved in championships/, one file per season
+    rr::Championship season;
+    std::string seasonPath;
+    bool inSeason = false, seasonRecorded = false;
+    std::vector<int> raceIds;  // championship driver id of each car in the race
+    auto driverName = [&](const rr::Championship& c, int id) {
+        const rr::LineupDriver& d = c.lineup.driver(id);
+        const auto& table = liveryTable();
+        return d.livery >= 0 && d.livery < (int)table.size() ? std::to_string(table[d.livery].number) + " " + d.name : d.name;
+    };
+    auto listSeasons = [&]() {
+        menu.seasons.clear();
+        std::vector<std::filesystem::path> files;
+        std::error_code ec;
+        for (const auto& e : std::filesystem::directory_iterator(seasonDir, ec))
+            if (e.path().extension() == ".json") files.push_back(e.path());
+        // newest first
+        std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
+            std::error_code e1;
+            return std::filesystem::last_write_time(a, e1) > std::filesystem::last_write_time(b, e1);
+        });
+        for (const auto& f : files) {
+            rr::Championship c;
+            if (!rr::Championship::load(f.string(), c, nullptr)) continue;
+            MenuState::SeasonLine l;
+            l.file = f.string();
+            l.name = c.name;
+            l.done = c.roundsDone();
+            l.total = (int)c.rounds.size();
+            if (l.done > 0) l.leader = driverName(c, c.driverStandings()[0].id);
+            if (!c.over()) {
+                const TrackStats* t = menu.trackStats(c.rounds[l.done].track);
+                l.next = t ? t->title : c.rounds[l.done].track;
+            }
+            menu.seasons.push_back(l);
+        }
+    };
+    auto openSeason = [&]() {
+        menu.season = &season;
+        menu.seasonPage = true;
+        menu.seasonTab = 0;
+        inSeason = true;
+    };
+    auto newSeason = [&]() -> bool {
+        if (menu.calendar.empty()) {
+            toast("Add at least one track to the calendar");
+            return false;
+        }
+        rr::Championship c;
+        c.name = menu.champName;
+        c.lineup = menuLineup(menu.champName);
+        for (const rr::ChampRound& r : menu.calendar) c.rounds.push_back({r.track, menu.roundLaps(r)});
+        c.distanceKm = menu.champDistance();
+        c.wearRate = menu.champWearRate();
+        c.twoCompounds = menu.twoCompoundsArg();
+        c.qualifying = menu.champQuali;
+        c.seed = cfg.seed;
+        std::error_code ec;
+        std::filesystem::create_directories(seasonDir, ec);
+        std::string base = seasonDir + "/" + fileName(c.name), path = base + ".json";
+        for (int k = 2; std::filesystem::exists(path, ec); ++k) path = base + "_" + std::to_string(k) + ".json";
+        if (!c.save(path, &err)) {
+            toast("Could not save: " + err);
+            return false;
+        }
+        season = c;
+        seasonPath = path;
+        openSeason();
+        // the next new season gets the next number
+        int n = 1;
+        if (std::sscanf(menu.champName.c_str(), "Season %d", &n) == 1) menu.champName = "Season " + std::to_string(n + 1);
+        return true;
+    };
+
     // ---- weekend: qualifying runs one car at a time, then the race starts in that order
     enum class Phase { Race, Quali, QualiDone, Test } phase = Phase::Race;
     const rr::Race* loggedRace = nullptr;  // the race whose log has been written
     std::vector<rr::EntrySpec> weekendEntries;
+    std::vector<int> weekendSlots, weekendIds;  // each entry's livery and championship driver id
     std::vector<float> qualiTime;
     int qualiCar = 0;
     auto qualiConfig = [&](int k) {
@@ -414,7 +581,7 @@ int main(int argc, char** argv) {
         for (int i : idx) {
             QualiLine l;
             l.name = weekendEntries[i].name;
-            l.color = liveryTable().empty() ? teamColor(i) : liveryTable()[menu.carLivery[i]].color;
+            l.color = liveryTable().empty() ? teamColor(i) : liveryTable()[weekendSlots[i]].color;
             l.time = qualiTime[i];
             l.running = phase == Phase::Quali && i == qualiCar;
             st.quali.push_back(l);
@@ -425,7 +592,7 @@ int main(int argc, char** argv) {
     };
     auto startQualiRun = [&](int k) -> bool {
         qualiCar = k;
-        setCarLiveries({menu.carLivery[k]});
+        setCarLiveries({weekendSlots[k]});
         auto fresh = makeRace(qualiConfig(k), paths);
         if (!fresh) return false;
         race = std::move(fresh);
@@ -458,9 +625,11 @@ int main(int argc, char** argv) {
         std::vector<int> order = refreshQualiLines();
         cfg.entries.clear();
         std::vector<int> slots;
+        raceIds.clear();
         for (int i : order) {
             cfg.entries.push_back(weekendEntries[i]);
-            slots.push_back(menu.carLivery[i]);
+            slots.push_back(weekendSlots[i]);
+            raceIds.push_back(weekendIds[i]);
         }
         setCarLiveries(slots);
         auto fresh = makeRace(cfg, paths);
@@ -470,6 +639,53 @@ int main(int argc, char** argv) {
         phase = Phase::Race;
         st.qualifying = false;
         st.followLeader = true;
+        return true;
+    };
+
+    // A championship round: the season's track, laps, rules and grid (qualifying first if the season has it).
+    auto startRound = [&]() -> bool {
+        if (season.over()) return false;
+        const rr::ChampRound& r = season.rounds[season.roundsDone()];
+        for (int i = 0; i < (int)menu.tracks.size(); ++i)
+            if (menu.tracks[i].file == r.track) menu.track = i;
+        ensureStats();
+        const std::vector<int> grid = season.nextGrid();
+        cfg = season.roundConfig(cfg, grid);
+        std::vector<int> slots;
+        for (int i = 0; i < (int)grid.size(); ++i) {
+            cfg.entries[i].name = driverName(season, grid[i]);
+            const int slot = season.lineup.driver(grid[i]).livery;
+            slots.push_back(slot >= 0 ? slot : i % std::max(1, menu.liveryCount));
+        }
+        setCarLiveries(slots);
+        auto fresh = makeRace(cfg, paths);
+        if (!fresh) return false;
+        race = std::move(fresh);
+        if (!buildScene()) return false;
+        simDebt = 0;
+        seasonRecorded = false;
+        st.paused = false;
+        st.followLeader = true;
+        st.resultsWindow = 0;
+        if (season.qualifying) {
+            // qualifying goes in the lineup's order; the race grid comes from the times
+            weekendEntries.clear();
+            weekendSlots.clear();
+            weekendIds.clear();
+            for (int id : season.lineup.defaultGrid()) {
+                for (int i = 0; i < (int)grid.size(); ++i)
+                    if (grid[i] == id) {
+                        weekendEntries.push_back(cfg.entries[i]);
+                        weekendSlots.push_back(slots[i]);
+                        weekendIds.push_back(id);
+                    }
+            }
+            qualiTime.assign(weekendEntries.size(), 0.0f);
+            phase = Phase::Quali;
+            return startQualiRun(0);
+        }
+        raceIds = grid;
+        phase = Phase::Race;
         return true;
     };
 
@@ -739,6 +955,20 @@ int main(int argc, char** argv) {
         }
     }
     if (inMenu && cfg.page == "stats") { menu.session = 2; menu.testStatsPage = true; }
+    if (inMenu && (cfg.page == "champ" || cfg.page == "season" || cfg.page == "lineups")) {
+        menu.session = 3;
+        listSeasons();
+        if (cfg.page == "season" && !menu.seasons.empty() &&
+            rr::Championship::load(menu.seasons[0].file, season, &err)) {
+            seasonPath = menu.seasons[0].file;
+            openSeason();
+        }
+        if (cfg.page == "lineups") {
+            menu.session = 0;
+            listLineups();
+            menu.lineupLoad = true;
+        }
+    }
     if (inMenu && cfg.page == "runs") { menu.session = 2; menu.runsPage = true; }
     if (inMenu && cfg.page == "grid") {
         menu.gridPage = true;
@@ -779,6 +1009,60 @@ int main(int argc, char** argv) {
             if (act == MenuAction::TrackChanged) {
                 ensureStats();
                 if (!applyMenu()) quit = true;
+            }
+            if (act == MenuAction::ListLineups) {
+                listLineups();
+                menu.lineupLoad = true;
+                menu.lineupRow = 0;
+            }
+            if (act == MenuAction::SaveLineup) {
+                std::error_code ec;
+                std::filesystem::create_directories(lineupDir, ec);
+                const std::string path = lineupDir + "/" + fileName(menu.inputText) + ".json";
+                if (menuLineup(menu.inputText).save(path, &err)) toast("Lineup saved: " + fileName(menu.inputText));
+                else toast("Could not save: " + err);
+            }
+            if (act == MenuAction::LoadLineup) {
+                rr::Lineup L;
+                if (!rr::Lineup::load(lineupDir + "/" + menu.lineupPick + ".json", L, &err)) toast(err);
+                else if (!applyLineup(L)) toast("This lineup does not fit the liveries");
+                else {
+                    toast("Lineup loaded: " + menu.lineupPick);
+                    if (!applyMenu()) quit = true;
+                }
+            }
+            if (act == MenuAction::ChampTab) {
+                listSeasons();
+                // a name no saved season has yet
+                for (bool taken = true; taken;) {
+                    taken = false;
+                    for (const auto& l : menu.seasons) taken = taken || l.name == menu.champName;
+                    int n = 0;
+                    if (taken && std::sscanf(menu.champName.c_str(), "Season %d", &n) == 1) menu.champName = "Season " + std::to_string(n + 1);
+                    else if (taken) menu.champName += " 2";
+                }
+                if (menu.calendar.empty()) menu.resetCalendar();
+            }
+            if (act == MenuAction::NewSeason) newSeason();
+            if (act == MenuAction::ContinueSeason && menu.seasonPick >= 0 && menu.seasonPick < (int)menu.seasons.size()) {
+                const std::string path = menu.seasons[menu.seasonPick].file;
+                if (rr::Championship::load(path, season, &err)) {
+                    seasonPath = path;
+                    openSeason();
+                } else {
+                    toast(err);
+                }
+            }
+            if (act == MenuAction::LeaveSeason) {
+                menu.seasonPage = false;
+                menu.season = nullptr;
+                inSeason = false;
+                listSeasons();
+                applyMenu();
+            }
+            if (act == MenuAction::StartRound) {
+                if (startRound()) inMenu = false;
+                else toast("Could not start the round: " + err);
             }
             if (act == MenuAction::Start) {
                 if (!applyMenu()) quit = true;
@@ -972,13 +1256,18 @@ int main(int argc, char** argv) {
             const bool enter = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
             if (phase == Phase::Quali && enter) finishQuali(shift);
             else if (phase == Phase::QualiDone && enter && !startWeekendRace()) quit = true;
+            else if (inSeason && phase == Phase::Race && enter && race->isOver()) {
+                inMenu = true;  // the season page, with the new standings
+                st.notice.clear();
+            }
             if (IsKeyPressed(KEY_ESCAPE) && !shotMode) {
                 inMenu = true;
                 phase = Phase::Race;
                 st.qualifying = false;
-                applyMenu();  // back to the grid
+                st.notice.clear();
+                if (!inSeason) applyMenu();  // back to the grid
             }
-            if (IsKeyPressed(KEY_R) && phase == Phase::Race) {
+            if (IsKeyPressed(KEY_R) && phase == Phase::Race && !inSeason) {
                 auto fresh = makeRace(cfg, paths);
                 if (fresh) {
                     race = std::move(fresh);
@@ -1020,6 +1309,16 @@ int main(int argc, char** argv) {
                 } else {
                     st.logPath.clear();
                 }
+            }
+            if (inSeason && phase == Phase::Race && race->isOver() && !seasonRecorded && !shotMode) {
+                seasonRecorded = true;
+                season.record(*race, raceIds);
+                const int done = season.roundsDone();
+                if (season.save(seasonPath, &err))
+                    st.notice = "Round " + std::to_string(done) + " of " + std::to_string(season.rounds.size()) +
+                                " saved to the championship.   Enter: standings";
+                else
+                    st.notice = "Could not save the championship: " + err;
             }
             if (!race->isOver() && loggedRace == race.get()) loggedRace = nullptr;
             if (phase != Phase::Race) st.focus = 0;
