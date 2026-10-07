@@ -103,10 +103,6 @@ void Effects::update(const rr::Race& race, float dt) {
                     a.y = b.y = 0.009f;
                     addMark(skids_, skidHead_, kSkidCap, a, b, 0.30f, 150);
                 }
-                if (level_ >= 2 && speed > 8) {
-                    Vector3 v = W(c.state.velWorld());
-                    emit(0, Vector3Lerp(now[2], now[3], 0.5f), v, 1);
-                }
             }
         }
         if (level_ >= 2 && !c.onTrack && speed > 6) {

@@ -692,7 +692,8 @@ MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits) {
             act = m.champ() ? MenuAction::NewSeason : MenuAction::Start;  // Enter is the start shortcut; Space is not
         }
     }
-    if (IsKeyPressed(KEY_ESCAPE)) act = MenuAction::Quit;
+    // Esc only ever steps back, so leaving a session can't close the viewer; Ctrl+Q quits.
+    if (IsKeyPressed(KEY_Q) && (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL))) act = MenuAction::Quit;
 
     const Vector2 mp = GetMousePosition();
     const bool moved = GetMouseDelta().x != 0 || GetMouseDelta().y != 0;

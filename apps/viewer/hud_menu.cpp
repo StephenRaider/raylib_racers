@@ -598,8 +598,8 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
         button(b, go, 0, m.row == row, row, hits);
         if (m.row == row) DrawRectangleRoundedLinesEx({b.x - 4, b.y - 4, b.width + 8, b.height + 8}, rnd(b, 14), 8, 2, kAccent);
         const char* help = m.champ()
-            ? "Up/Down choose   Left/Right change   Enter select   Ctrl+Up/Down move a round   Del remove   Esc quit"
-            : "Up/Down choose   Left/Right change (Shift: bigger steps)   Enter start   Esc quit";
+            ? "Up/Down choose   Left/Right change   Enter select   Ctrl+Up/Down move a round   Del remove   Ctrl+Q quit"
+            : "Up/Down choose   Left/Right change (Shift: bigger steps)   Enter start   Ctrl+Q quit";
         text(help, mx, sh - 58, 14, kDim);
     }
     if (!m.toast.empty() && GetTime() < m.toastUntil) {
