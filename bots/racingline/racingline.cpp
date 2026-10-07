@@ -20,6 +20,12 @@
 //     behind, and brakes in time for the car ahead;
 //   - blue flags: moves aside and lifts for a car that is lapping it;
 //   - the limit: learns, per 20 m of track, how much grip there really is.
+//   - the weekend: practice learns the limit faster and probes a little past
+//     it; the grip per 20 m, pace, fuel use, tyre wear and pit loss are kept
+//     in the weekend memory for qualifying and the race.
+//   - brakes and tyres: cold or faded discs move the braking points, hot
+//     discs bring lift and coast, and the hottest single tyre sets how much
+//     to back off.
 //     Sliding (front or rear past its grip) lowers that stretch's speed and the
 //     braking zone before it; clean laps well inside the limit raise it. On top
 //     of that a driver-aid layer (rr_awareness.h) catches oversteer and manages
@@ -44,6 +50,7 @@
 //                  backing off to cool them
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -104,6 +111,17 @@ struct RacingLine {
     float startLat = 0, startDist = 0;  // grid slot: hold that lane off the line, then ease onto the racing line
     float sideLo = -1e9f, sideHi = 1e9f;  // lateral room left by cars alongside (absolute, m)
     int plannedLap = -1;
+    // brakes: the discs bite less cold and fade hot, so brake earlier for them
+    float brakeNow = 1.0f;       // disc grip now, smoothed (1 inside the window)
+    float brakePlanned = 1.0f;   // the disc grip the speed profile assumes
+    double brakeReplanAt = 0;
+    bool brakesHot = false;      // lift and coast to cool them
+    // the weekend
+    int session = RR_SESSION_RACE;
+    unsigned char* memory = nullptr;
+    int memorySize = 0;
+    bool haveNotes = false;
+    float noteLapRef = 0, noteFuel = 0, noteWear = 0, notePitLoss = 0, noteSpan = 0;
 
     // learning the limit: grip multiplier per 20 m bin
     static constexpr float kBin = 20.0f;
@@ -249,7 +267,7 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
             float normal = m * g + D * v * v;
             float lat = m * v * v * kappa[j];
             float fLong = std::sqrt(std::max(0.0f, mu * mu * normal * normal - lat * lat));
-            fLong = std::min(fLong, r.car.max_brake_force);
+            fLong = std::min(fLong, r.car.max_brake_force * r.brakePlanned);  // cold or faded discs give less
             float a = (fLong * r.brakeScale + drag * v * v) / m;
             float vMax = std::sqrt(v * v + 2 * a * r.ds);
             r.speed[i] = std::min(r.speed[i], vMax);
@@ -260,6 +278,70 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
 }
 
 void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg);
+
+// ---------------------------------------------------------------- weekend notes
+// What practice and qualifying teach us, kept in the weekend memory the host
+// carries from session to session: the grip learnt per 20 m of track and the
+// strategy model's measured pace, fuel use, tyre wear and pit loss.
+struct Notes {
+    unsigned magic;        // kNotesMagic
+    int bins;
+    float trackLen;
+    int sessions;          // sessions that wrote these notes
+    float lapRef, fuelPerLap, wearPerLapMed, pitLoss, spanNormal;
+    float adj[1];          // bins entries
+};
+constexpr unsigned kNotesMagic = 0x524c4e31;  // "RLN1"
+
+size_t notesSize(int bins) { return sizeof(Notes) + sizeof(float) * (size_t)std::max(0, bins - 1); }
+
+void loadNotes(RacingLine& r) {
+    const int bins = (int)r.adj.size();
+    if (!r.memory || (size_t)r.memorySize < notesSize(bins)) return;
+    Notes n;
+    std::memcpy(&n, r.memory, sizeof n);
+    if (n.magic != kNotesMagic || n.bins != bins || std::fabs(n.trackLen - r.L) > 1.0f) return;
+    const float* adj = reinterpret_cast<const float*>(r.memory + offsetof(Notes, adj));
+    for (int b = 0; b < bins; ++b) {
+        float a;
+        std::memcpy(&a, adj + b, sizeof a);
+        if (std::isfinite(a)) r.adj[b] = std::clamp(a, 0.8f, r.push);
+    }
+    r.haveNotes = true;
+    r.noteLapRef = n.lapRef;
+    r.noteFuel = n.fuelPerLap;
+    r.noteWear = n.wearPerLapMed;
+    r.notePitLoss = n.pitLoss;
+    r.noteSpan = n.spanNormal;
+}
+
+void saveNotes(const RacingLine& r) {
+    const int bins = (int)r.adj.size();
+    if (!r.memory || (size_t)r.memorySize < notesSize(bins)) return;
+    Notes n{};
+    std::memcpy(&n, r.memory, sizeof n);
+    const int sessions = n.magic == kNotesMagic ? n.sessions + 1 : 1;
+    n = Notes{};
+    n.magic = kNotesMagic;
+    n.bins = bins;
+    n.trackLen = r.L;
+    n.sessions = sessions;
+    n.lapRef = r.model.lapRef;
+    n.fuelPerLap = r.model.fuelPerLap;
+    n.wearPerLapMed = r.model.wearPerLapMed;
+    n.pitLoss = r.model.pitLoss;
+    n.spanNormal = r.spanNormal;
+    std::memcpy(r.memory, &n, offsetof(Notes, adj));
+    std::memcpy(r.memory + offsetof(Notes, adj), r.adj.data(), sizeof(float) * (size_t)bins);
+}
+
+void sessionEnd(void* self, const RRSessionSummary* summary) {
+    auto* r = static_cast<RacingLine*>(self);
+    if (std::getenv("RL_DEBUG"))
+        std::fprintf(stderr, "car %d session %d over: %d laps, best %.3f; notes saved\n", r->index, summary->session,
+                     summary->laps_done, summary->best_lap);
+    saveNotes(*r);
+}
 
 void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const char* params, RRRobotConfig* cfg) {
     auto* r = new RacingLine();
@@ -284,6 +366,10 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const ch
     r->L = track->length;
     r->ds = track->length / track->num_points;
     r->adj.assign((size_t)std::ceil(r->L / RacingLine::kBin), 1.0f);
+    r->session = cfg->session;
+    r->memory = cfg->memory;
+    r->memorySize = cfg->memory_size;
+    loadNotes(*r);
     planLine(*r);
     planSpeed(*r, car->mass + 0.5f * car->fuel_capacity * car->fuel_density, 1.0f);
     initStrategy(*r, params, cfg);
@@ -323,6 +409,14 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
         pitT += (r.fwd(p.entry_s, p.lane_start_s) + r.fwd(p.lane_end_s, p.exit_s)) / (1.6f * p.speed_limit);
         r.spanNormal = lineTime(r, p.entry_s, p.exit_s);
         m.pitLoss = std::max(5.0f, pitT - r.spanNormal) + 4.0f;
+    }
+    // What practice measured beats the priors.
+    if (r.haveNotes) {
+        if (r.noteLapRef > 10) { m.lapRef = r.noteLapRef; r.lapRefN = 2; }
+        if (r.noteFuel > 0.05f) m.fuelPerLap = r.noteFuel;
+        if (r.noteWear > 0.001f) m.wearPerLapMed = r.noteWear;
+        if (r.usePit && r.notePitLoss > 3) m.pitLoss = r.notePitLoss;
+        if (r.usePit && r.noteSpan > 1) r.spanNormal = r.noteSpan;
     }
     const int laps = cfg->race_laps > 0 ? cfg->race_laps : 10;
     const int tires = (int)param(params, "tires", 0.0f);
@@ -770,8 +864,10 @@ void learnLimit(RacingLine& r, const RRSensors* in, int idx, bool busy) {
                 r.adjDirty = true;
             } else if (r.binUse > 0.4f && r.binUse < 0.9f) {
                 // Working the tyres but well inside their grip: a little faster next time.
+                // Practice is for finding the limit: bigger steps, a little further.
+                const bool practice = r.session == RR_SESSION_PRACTICE;
                 float& a = r.adj[r.bin];
-                const float na = std::min(r.push, a + 0.01f);
+                const float na = std::min(r.push + (practice ? 0.05f : 0.0f), a + (practice ? 0.02f : 0.01f));
                 if (na != a) { a = na; r.adjDirty = true; }
             }
         }
@@ -929,11 +1025,37 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         if (in->tire_temp_window[1] > 0) {  // ABI 4 host
             const float grip = std::max(0.5f, in->tire_grip);
             f = std::clamp(std::min(in->axle_grip[0], in->axle_grip[1]) / grip, 0.8f, 1.05f);
-            const float over = std::max(in->tire_temp[0], in->tire_temp[1]) - (in->tire_temp_window[1] + r->heat);
+            // the hottest single tyre: one cooking tyre goes off before its axle's mean shows it
+            float hottest = std::max(in->tire_temp[0], in->tire_temp[1]);
+            if (in->tire_temp_wheel[0] > 0)
+                for (int w = 0; w < 4; ++w) hottest = std::max(hottest, in->tire_temp_wheel[w] - 3.0f);
+            const float over = hottest - (in->tire_temp_window[1] + r->heat);
             if (over > 0) f *= std::max(0.9f, 1.0f - 0.006f * over);
         }
         const float dt = in->dt > 0 ? in->dt : 0.02f;
         r->tyreNow += (f - r->tyreNow) * std::min(1.0f, dt / 1.5f);
+    }
+    // Brakes: cold discs bite less and hot ones fade (see brake_temp_window).
+    // Re-plan the braking points for the grip they have, and lift and coast to
+    // cool them when they get close to fading.
+    if (in->brake_temp_window[1] > 0) {
+        const float lo = in->brake_temp_window[0], hi = in->brake_temp_window[1];
+        float coldest = 1e9f, hottest = -1e9f;
+        for (int w = 0; w < 4; ++w) {
+            coldest = std::min(coldest, in->brake_temp[w]);
+            hottest = std::max(hottest, in->brake_temp[w]);
+        }
+        float f = 1.0f;
+        if (coldest < lo) f = 0.75f + 0.25f * std::clamp((coldest - 50.0f) / (lo - 50.0f), 0.0f, 1.0f);
+        if (hottest > hi) f = std::min(f, std::max(0.6f, 1.0f - 0.002f * (hottest - hi)));
+        const float dt = in->dt > 0 ? in->dt : 0.02f;
+        r->brakeNow += (f - r->brakeNow) * std::min(1.0f, dt / 1.0f);
+        if (std::fabs(r->brakeNow - r->brakePlanned) > 0.03f && in->time >= r->brakeReplanAt) {
+            r->brakePlanned = r->brakeNow;
+            planSpeed(*r, mass, in->tire_grip);
+            r->brakeReplanAt = in->time + 2.0;
+        }
+        r->brakesHot = hottest > hi - (r->brakesHot ? 60.0f : 30.0f);
     }
     // Speed control against the profile, looking a little ahead for actuator lag.
     int si = r->wrap(idx + (int)(v * 0.15f / r->ds) + 1);
@@ -966,8 +1088,9 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
 
     // Lift and coast to save fuel: off the throttle this far before a braking zone.
     bool coast = false;
-    if (r->fuelSave > 0 && !pitting && v > 40.0f) {
-        const int ahead = (int)(r->fuelSave * kCoastDist / r->ds);
+    const float coastShare = std::max(r->fuelSave, r->brakesHot ? 0.5f : 0.0f);
+    if (coastShare > 0 && !pitting && v > 40.0f) {
+        const int ahead = (int)(coastShare * kCoastDist / r->ds);
         for (int k = 4; k <= ahead && !coast; k += 4) coast = r->speed[r->wrap(idx + k)] < v - 8.0f;
     }
     float err = vTarget - v;
@@ -1017,7 +1140,7 @@ int debugPath(void* self, float* xy, int maxPoints) {
     return count;
 }
 
-const RRRobotApi kApi = {RR_ABI_VERSION, RL_NAME, "Raylib Racers examples", create, drive, destroy, debugPath, nullptr};
+const RRRobotApi kApi = {RR_ABI_VERSION, RL_NAME, "Raylib Racers examples", create, drive, destroy, debugPath, sessionEnd};
 
 }  // namespace
 

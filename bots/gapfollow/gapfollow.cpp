@@ -114,7 +114,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
 
     // Speed from the free distance (braking-limited), slower when steering hard.
     float d = std::max(0.0f, freeDist - 12.0f);
-    float vTarget = (16.0f + std::sqrt(2.0f * 9.0f * d)) * g->speedScale;
+    float vTarget = (16.0f + std::sqrt(2.0f * 9.0f * rr_stopping_factor(in) * d)) * g->speedScale;
     vTarget *= 1.0f - 0.35f * std::fabs(out->steer);
     vTarget = std::min(vTarget * blue, rr_follow_speed(in, myLat, myLat, in->speed_x, 7.0f));
 
