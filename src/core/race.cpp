@@ -1013,7 +1013,10 @@ void Race::step() {
     }
     for (Car& c : cars_) resolveWalls(c);
     for (size_t i = 0; i < cars_.size(); ++i)
-        for (size_t j = i + 1; j < cars_.size(); ++j) resolveCarPair(cars_[i], cars_[j]);
+        for (size_t j = i + 1; j < cars_.size(); ++j)
+            // A retired car is taken away by the marshals: the robots no longer see it
+            // (computeSensors skips it), so it must not stay on the track as an obstacle.
+            if (!cars_[i].dnf && !cars_[j].dnf) resolveCarPair(cars_[i], cars_[j]);
 
     time_ += dt;
     steps_++;

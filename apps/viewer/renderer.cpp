@@ -973,7 +973,9 @@ void Renderer::drawScene(const rr::Race& race, bool shadowPass) {
         }
     }
 
-    for (size_t i = 0; i < race.cars().size(); ++i) drawCar(race.cars()[i], (int)i);
+    // Retired cars are taken away (they no longer collide), so they are not drawn either.
+    for (size_t i = 0; i < race.cars().size(); ++i)
+        if (!race.cars()[i].dnf) drawCar(race.cars()[i], (int)i);
 }
 
 // Shell grass: stacked see-through copies of the ground round the camera, each

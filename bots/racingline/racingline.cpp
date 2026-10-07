@@ -903,6 +903,9 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
     for (int k = 0; k < in->num_nearby; ++k) {
         const RROpponent& o = in->nearby[k];
         if (o.ds <= 0 || o.ds > 15.0f + v || o.pit_state != RR_PIT_NONE) continue;
+        // A stopped or crawling car is an obstacle to drive round, not a car to queue
+        // behind (rr_hazard_speed slows us past it): following it to 0 jams the field.
+        if (o.speed < 5.0f) continue;
         bool inPath = std::fabs(o.lateral - pathLat(o.ds)) < 2.3f || (o.ds < 12.0f && std::fabs(o.lateral - myLat) < 2.3f);
         if (!inPath) continue;
         // Gap that grows with speed; close it gently, and if they are
@@ -1010,7 +1013,7 @@ float racecraft(RacingLine& r, const RRSensors* in, int idx, float v, float* spe
         for (int k = 0; k < in->num_nearby; ++k) {
             const RROpponent& o = in->nearby[k];
             if (o.car_index == r.passCar && o.ds > -2.0f && o.ds < 10.0f)
-                *speedCap = std::min(*speedCap, std::max(0.0f, o.speed - 1.5f));
+                *speedCap = std::min(*speedCap, std::max(4.0f, o.speed - 1.5f));  // never to a halt
         }
         r.passSide = 0;
     }
