@@ -229,7 +229,8 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     };
     auto tree = [&](TreeKind k, Vec2 p, float scale, Color leaf) { treeAt(k, W(p), scale, leaf); };
     auto mound = [&](Vec2 c, float rx, float h, float rz, float yaw, Color col) {
-        // the cap of a sunken, flattened sphere: a gentle hill `h` high, about 0.66 rx across
+        // the cap of a sunken, flattened sphere: a gentle hill `h` high, 0.66 rx in radius
+        if (!clearOfTrack(c, 10 + std::max(rx, rz) * 0.7f)) return;  // never onto the track or its runoff
         add(P_MOUND, W(c, -h * 3.0f), {rx, h * 4.0f, rz}, yaw, col);
         feet.push_back({c, std::max(rx, rz) * 0.85f});
     };
@@ -480,8 +481,11 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         }
         for (int k = 0; k < 40; ++k) {
             const Vec2 p = randomPoint(260);
-            if (!free(p, 30, 30) || p.x < seaX + 150) continue;
-            mound(p, R(60, 160), R(8, 22), R(60, 160), R(0, PI), mix({140, 132, 90, 255}, {118, 116, 76, 255}, R(0, 1)));
+            const float rx = R(60, 160), h = R(8, 22), rz = R(60, 160), yaw = R(0, PI);
+            const Color col = mix({140, 132, 90, 255}, {118, 116, 76, 255}, R(0, 1));
+            // the whole dune clear of the track and its runoff, not just its centre
+            if (!free(p, 15, std::max(rx, rz) * 0.7f) || p.x < seaX + 150) continue;
+            mound(p, rx, h, rz, yaw, col);
         }
         woods(10, 0.55f, 140, 6, 300, [&](Vec2 p, float r) {
             if (p.x < seaX + 150) return;
