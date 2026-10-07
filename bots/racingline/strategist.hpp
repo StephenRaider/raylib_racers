@@ -46,7 +46,7 @@ struct Model {
     float wearGrowth = 1.2f;    // worn tyres slide more and wear faster: rate x (1 + growth x wear)
     float pitLoss = 20;         // s lost driving through the pit lane (without the service)
     float serviceScale = 1;     // pit_service_scale
-    float fuelCap = 58, fuelDensity = 0.75f;
+    float fuelCap = 65, fuelDensity = 0.75f;
     float fuelSecPerKg = 0.023f;
     int maxStops = 3;
     // What a stop costs beyond the pit lane and the service: the out lap on

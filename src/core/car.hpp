@@ -9,9 +9,6 @@ namespace rr {
 // Defaults approximate a 2004-2010 Formula 1 car: ~605 kg with driver, a 19,000 rpm
 // ~650 kW engine, a 7-speed seamless gearbox, carbon brakes and roughly 2.5x the
 // car's weight in downforce at 300 km/h.
-// Track length the car's fuelCapacity is sized for (Circuit Raylib, m).
-constexpr float kTankTrackLength = 3176.0f;
-
 struct CarParams {
     float mass = 605;
     float length = 4.6f, width = 1.8f;
@@ -58,9 +55,7 @@ struct CarParams {
     float drivetrainEff = 0.9f;
 
     // Fuel: mass is the dry car with driver; fuel adds to it.
-    // litres on Circuit Raylib: about 25 laps at ~2.3 l/lap. Every track scales it by its
-    // length (kTankTrackLength), so a full tank lasts about as many laps anywhere.
-    float fuelCapacity = 58.0f;
+    float fuelCapacity = 65.0f;   // litres, on every track: about 28 laps of Circuit Raylib at ~2.3 l/lap
     float fuelDensity = 0.75f;    // kg/l
     float fuelPerJoule = 1.2e-7f; // litres per joule of engine work (~25% efficient at 34 MJ/l)
     // Tyre wear: wear per joule of sliding work, before compound, temperature
