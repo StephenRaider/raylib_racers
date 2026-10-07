@@ -17,6 +17,8 @@ public:
 
     // Resolves "name" to <dir>/<name>.so (or .dll/.dylib) for each search dir,
     // or takes a path as is.
+    // The library file for a robot name (or path), "" if none.
+    static std::string find(const std::string& nameOrPath, const std::vector<std::string>& searchDirs);
     static std::shared_ptr<RobotModule> load(const std::string& nameOrPath,
                                              const std::vector<std::string>& searchDirs,
                                              std::string* err);

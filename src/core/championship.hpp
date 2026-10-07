@@ -82,6 +82,8 @@ struct Championship {
     int twoCompounds = -1;    // RaceConfig::twoCompounds
     bool qualifying = false;  // a qualifying session sets each grid
     int practiceLaps = 0;     // practice before each round, laps per car (0 = none)
+    bool sandbox = false;     // competition rules: robots in their own locked-down processes
+    float cpuCapMs = 0;       // ...and a CPU cap per drive() call (0 = none)
     uint64_t seed = 1;
 
     static int pointsFor(int position);  // 1-based; 0 outside the top ten

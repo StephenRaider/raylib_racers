@@ -38,6 +38,11 @@ std::string usage(const char* prog, bool viewer) {
         "  --ambient C            air and track temperature (default 25): hotter days overheat the tyres\n"
         "  --two-compounds on|off|auto  every car must use two compounds (auto: races over 20 laps)\n"
         "  --no-pits              pit requests are ignored (robots are told, ABI 6)\n"
+        "Competition\n"
+        "  --sandbox              run each robot in its own locked-down process (rr_bothost): no file\n"
+        "                         access, and a robot that crashes or hangs only loses its car\n"
+        "  --cpu-cap MS           CPU one drive() call may use; a later answer is ignored (the car keeps\n"
+        "                         its last controls) and over 50 such calls put the car out\n"
         "Output\n"
         "  --json FILE            write results as JSON\n"
         "  --telemetry DIR        write one CSV per car at the robot rate\n"
@@ -114,6 +119,11 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
                 cfg.entries.back().fuel = v;
             }
             else if (a == "--no-pits") cfg.pitsClosed = true;
+            else if (a == "--sandbox") cfg.sandbox = true;
+            else if (a == "--cpu-cap") {
+                cfg.cpuCapMs = std::stof(need(i, a));
+                if (cfg.cpuCapMs < 0) throw std::runtime_error("--cpu-cap must not be negative");
+            }
             else if (!viewer && a == "--practice") {
                 cfg.practiceLaps = 15;
                 if (i + 1 < argc && argv[i + 1][0] != '-') cfg.practiceLaps = std::stoi(argv[++i]);
@@ -178,6 +188,14 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
     if (cfg.fuelRate < 0 || cfg.wearRate < 0) { if (err) *err = "--fuel-rate and --wear-rate must not be negative"; return false; }
     if (cfg.robotHz < 1) { if (err) *err = "--robot-hz must be positive"; return false; }
     return true;
+}
+
+std::string botHostPath(const std::string& dir) {
+#if defined(_WIN32)
+    return dir + "/rr_bothost.exe";
+#else
+    return dir + "/rr_bothost";
+#endif
 }
 
 std::string exeDir(const char* argv0) {

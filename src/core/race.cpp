@@ -67,10 +67,8 @@ std::string trackFile(const std::string& name, const std::vector<std::string>& d
 
 // Tells the robot its session is over (once), with how it went.
 void Race::endSession(Car& c) {
-    if (c.sessionEnded || !c.robot || !c.module) return;
+    if (c.sessionEnded || !c.driver) return;
     c.sessionEnded = true;
-    const RRRobotApi* api = c.module->api();
-    if (api->abi_version < 8 || !api->session_end) return;  // older robots' RRRobotApi ends before it
     RRSessionSummary s{};
     s.session = cfg_.session;
     s.laps_done = c.lapsDone;
@@ -82,13 +80,13 @@ void Race::endSession(Car& c) {
     s.tire_wear[0] = c.state.tireWear[0];
     s.tire_wear[1] = c.state.tireWear[1];
     s.fuel = c.state.fuel;
-    api->session_end(c.robot, &s);
+    c.driver->sessionEnd(s, c.memory.get());
 }
 
 Race::~Race() {
     for (auto& c : cars_) {
         endSession(c);
-        if (c.robot && c.module && c.module->api()->destroy) c.module->api()->destroy(c.robot);
+        c.driver.reset();  // destroy()
         if (c.telemetry) std::fclose(c.telemetry);
     }
 }
@@ -147,10 +145,21 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
             }
             applyDevelopment(rules, tokens, c.phys);
         }
-        c.module = RobotModule::load(e.robot, botDirs, err);
-        if (!c.module) return false;
-        const RRRobotApi* api = c.module->api();
-        c.robotName = api->name ? api->name : e.robot;
+        if (cfg.sandbox) {
+            const std::string lib = RobotModule::find(e.robot, botDirs);
+            if (lib.empty()) {
+                if (err) *err = "robot '" + e.robot + "' not found (looked in the bots directory and as a path)";
+                return false;
+            }
+            c.driver = RobotDriver::sandbox(cfg.botHost, lib, err);
+            if (!c.driver) return false;
+            c.driver->setHangTimeout(std::max(2.0, 200.0 * cfg.cpuCapMs / 1000.0));
+        } else {
+            auto mod = RobotModule::load(e.robot, botDirs, err);
+            if (!mod) return false;
+            c.driver = RobotDriver::inProcess(mod);
+        }
+        c.robotName = c.driver->name().empty() ? e.robot : c.driver->name();
         c.name = e.name.empty() ? c.robotName : e.name;
         c.params = e.params;
         std::memcpy(c.robotCfg.track_sensor_angles, kDefaultSensorAngles, sizeof kDefaultSensorAngles);
@@ -173,9 +182,9 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         c.robotCfg.memory = c.memory->data();
         c.robotCfg.memory_size = RR_SESSION_MEMORY;
         RRCarSpec spec = c.phys.spec();
-        c.robot = api->create(&track_.info(), &spec, (int)i, c.params.c_str(), &c.robotCfg);
-        if (!c.robot) {
-            if (err) *err = "robot '" + c.robotName + "' refused car " + std::to_string(i) + " (params: \"" + c.params + "\")";
+        if (!c.driver->create(track_.info(), spec, (int)i, c.params, c.robotCfg, err)) {
+            if (err && err->empty())
+                *err = "robot '" + c.robotName + "' refused car " + std::to_string(i) + " (params: \"" + c.params + "\")";
             return false;
         }
         c.robotCfg.initial_fuel = clampf(c.robotCfg.initial_fuel, 0.0f, c.phys.fuelCapacity);
@@ -473,8 +482,25 @@ void Race::updateBlueFlags() {
     }
 }
 
+// The robot is out (crashed, hung, over the CPU limit): the car stops where it is.
+void Race::retire(Car& c, const std::string& why) {
+    c.dnf = true;
+    c.dnfReason = why;
+    c.control = RRControl{};
+    c.control.brake = 1;
+    c.control.gear = c.state.gear;
+}
+
 void Race::callRobots() {
     updateBlueFlags();
+    // Ask every robot first, then collect the answers: sandboxed robots think at the same time.
+    for (Car& c : cars_) {
+        if (c.dnf) continue;
+        computeSensors(c);
+        RRControl in{};
+        in.gear = c.state.gear;
+        c.driver->beginDrive(c.sensors, in);
+    }
     for (Car& c : cars_) {
         if (c.dnf) {
             c.control = RRControl{};
@@ -482,10 +508,25 @@ void Race::callRobots() {
             c.control.gear = c.state.gear;
             continue;
         }
-        computeSensors(c);
         RRControl ctl{};
-        ctl.gear = c.state.gear;
-        c.module->api()->drive(c.robot, &c.sensors, &ctl);
+        const DriveResult res = c.driver->endDrive(ctl);
+        if (res.failed) {
+            retire(c, res.why);
+            continue;
+        }
+        c.cpuTotal += res.cpu;
+        c.cpuMax = std::max(c.cpuMax, res.cpu);
+        ++c.driveCalls;
+        // Over the CPU cap: this answer is too late, the car keeps its last controls.
+        if (cfg_.cpuCapMs > 0 && res.cpu * 1000.0 > cfg_.cpuCapMs) {
+            ++c.cpuOverruns;
+            if (c.cpuOverruns > kMaxCpuOverruns) {
+                retire(c, "over the CPU limit");
+                continue;
+            }
+            if (c.telemetry) writeTelemetry(c);
+            continue;
+        }
         ctl.status[sizeof ctl.status - 1] = 0;
         if (!std::isfinite(ctl.steer)) ctl.steer = 0;
         if (!std::isfinite(ctl.accel)) ctl.accel = 0;
@@ -1040,6 +1081,8 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
                      c.finished ? "true" : "false", c.dnf ? "true" : "false",
                      c.finished ? "finished" : (c.dnf ? ("dnf " + c.dnfReason).c_str() : (c.dnfReason.empty() ? "running" : c.dnfReason.c_str())),
                      c.finished ? c.raceTime() : 0.0, c.bestLap);
+        std::fprintf(f, "\"cpu_avg_ms\": %.4f, \"cpu_max_ms\": %.4f, \"cpu_overruns\": %d, ",
+                     c.driveCalls ? 1000.0 * c.cpuTotal / (double)c.driveCalls : 0.0, 1000.0 * c.cpuMax, c.cpuOverruns);
         std::fprintf(f, "\"penalties\": %d, \"penalty_time\": %.1f, \"blue_flags\": %d, ", c.penalties, c.penaltyTime,
                      c.blueFlags);
         std::fprintf(f, "\"distance\": %.2f, \"collisions\": %d, \"damage\": %.1f, ", c.distRaced,
