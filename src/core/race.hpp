@@ -7,6 +7,7 @@
 
 #include "car.hpp"
 #include "config.hpp"
+#include "robot_driver.hpp"
 #include "robot_loader.hpp"
 #include "track.hpp"
 
@@ -17,9 +18,12 @@ struct Car {
     std::string name;
     std::string robotName;
     std::string params;
-    std::shared_ptr<RobotModule> module;
-    void* robot = nullptr;
+    std::shared_ptr<RobotDriver> driver;  // the robot, in this process or sandboxed
     RRRobotConfig robotCfg{};
+    // CPU the robot used in drive(), s (wall time on Windows), and calls over the cap
+    double cpuTotal = 0, cpuMax = 0;
+    long long driveCalls = 0;
+    int cpuOverruns = 0;
     std::shared_ptr<std::vector<unsigned char>> memory;  // the weekend memory the robot writes to
     bool sessionEnded = false;  // session_end() called
 
@@ -171,6 +175,8 @@ private:
     void updateBlueFlags();
     RRControl coolDownControl(Car& c);
     void endSession(Car& c);
+    void retire(Car& c, const std::string& why);
+    static constexpr int kMaxCpuOverruns = 50;  // drive() calls over the CPU cap before the car is out
     void wake(Car& c) const;  // slipstream and dirty air behind other cars
     void finishService(Car& c);
     float wrapDs(float ds) const;

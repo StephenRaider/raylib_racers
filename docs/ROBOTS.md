@@ -95,6 +95,16 @@ driving, `sensors->turn` is the turn you are in (0 on a straight),
 `sensors->next_turn` the next one ahead and `sensors->next_turn_ds` the
 distance to its start.
 
+## Competition rules
+
+Contests run robots with `--sandbox --cpu-cap MS` (see
+[COMPETITION.md](COMPETITION.md)). Then your robot runs in its own process
+and cannot open files, sockets or threads, so keep everything in memory and
+carry notes between sessions in the weekend memory. Each `drive()` call has a
+CPU budget: an answer over it is ignored (the car keeps its last controls), and
+more than 50 of those retire the car. Do expensive planning in `create()`.
+Anything you `printf` goes to the simulator's stderr.
+
 ## Sensors (`RRSensors`)
 
 SCR / TORCS-style sensors:

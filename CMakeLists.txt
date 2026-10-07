@@ -35,7 +35,8 @@ add_library(rr_core STATIC
   src/core/spec.cpp
   src/core/testlog.cpp
   src/core/championship.cpp
-  src/core/weekend.cpp)
+  src/core/weekend.cpp
+  src/core/robot_driver.cpp)
 target_include_directories(rr_core PUBLIC include src/core)
 target_compile_options(rr_core PRIVATE ${RR_WARNINGS})
 target_compile_definitions(rr_core PUBLIC RR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -45,6 +46,15 @@ add_executable(rr_race apps/headless/main.cpp)
 target_link_libraries(rr_race PRIVATE rr_core)
 target_compile_options(rr_race PRIVATE ${RR_WARNINGS})
 rr_output(rr_race "${RR_OUT}")
+
+# The sandbox: runs one robot in its own locked-down process (--sandbox).
+add_executable(rr_bothost apps/bothost/main.cpp)
+target_link_libraries(rr_bothost PRIVATE rr_core)
+target_compile_options(rr_bothost PRIVATE ${RR_WARNINGS})
+rr_output(rr_bothost "${RR_OUT}")
+if(WIN32)
+  target_link_libraries(rr_core PUBLIC advapi32)
+endif()
 
 # ---------------------------------------------------------------- example robots
 function(rr_add_robot name)
@@ -165,10 +175,26 @@ if(RR_BUILD_BOTS)
   add_test(NAME weekend_memory_wrong COMMAND rr_race --track oval --laps 1 --quiet --practice 1 --qualifying
            --car $<TARGET_FILE:memcheck> --params expect=3)
   set_tests_properties(weekend_memory_wrong PROPERTIES WILL_FAIL TRUE)
+  # The sandbox: a robot can't write files, and one that crashes, hangs or hogs
+  # the CPU only loses its own car.
+  rr_add_robot(evil tests/evil/evil.c)
+  rr_output(evil "${RR_OUT}/test_bots")
+  set(EVIL $<TARGET_FILE:evil>)
+  add_test(NAME sandbox_no_files COMMAND rr_race --track oval --laps 1 --quiet --sandbox
+           --car ${EVIL} --params write=${CMAKE_BINARY_DIR}/ctest_escaped.txt)
+  add_test(NAME sandbox_files_in_process COMMAND rr_race --track oval --laps 1 --quiet
+           --car ${EVIL} --params write=${CMAKE_BINARY_DIR}/ctest_escaped_in_process.txt)
+  set_tests_properties(sandbox_files_in_process PROPERTIES WILL_FAIL TRUE)  # (no sandbox: it can)
+  add_test(NAME sandbox_crash COMMAND rr_race --track oval --laps 1 --sandbox --car simple --car ${EVIL} --params crash=1)
+  set_tests_properties(sandbox_crash PROPERTIES PASS_REGULAR_EXPRESSION "simple +[0-9]+:[0-9.]+.*robot crashed")
+  add_test(NAME sandbox_hang COMMAND rr_race --track oval --laps 1 --sandbox --car simple --car ${EVIL} --params hang=1)
+  set_tests_properties(sandbox_hang PROPERTIES PASS_REGULAR_EXPRESSION "simple +[0-9]+:[0-9.]+.*robot hung")
+  add_test(NAME cpu_cap COMMAND rr_race --track oval --laps 1 --cpu-cap 1 --car simple --car ${EVIL} --params cpu=4)
+  set_tests_properties(cpu_cap PROPERTIES PASS_REGULAR_EXPRESSION "simple +[0-9]+:[0-9.]+.*over the CPU limit")
 endif()
 
 # ---------------------------------------------------------------- install
-install(TARGETS rr_race RUNTIME DESTINATION .)
+install(TARGETS rr_race rr_bothost RUNTIME DESTINATION .)
 if(RR_BUILD_VIEWER)
   install(TARGETS rr_viewer RUNTIME DESTINATION .)
 endif()

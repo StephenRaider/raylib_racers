@@ -45,30 +45,26 @@ RobotModule::~RobotModule() {
     if (handle_) closeLib(handle_);
 }
 
+std::string RobotModule::find(const std::string& nameOrPath, const std::vector<std::string>& searchDirs) {
+    std::error_code ec;
+    if (fs::exists(nameOrPath, ec) && !fs::is_directory(nameOrPath, ec)) return fs::absolute(nameOrPath, ec).string();
+    for (const auto& d : searchDirs) {
+        for (std::string cand : {nameOrPath + kExt, "lib" + nameOrPath + kExt, nameOrPath}) {
+            fs::path p = fs::path(d) / cand;
+            if (fs::exists(p, ec) && !fs::is_directory(p, ec)) return fs::absolute(p, ec).string();
+        }
+    }
+    return "";
+}
+
 std::shared_ptr<RobotModule> RobotModule::load(const std::string& nameOrPath,
                                                const std::vector<std::string>& searchDirs,
                                                std::string* err) {
-    std::string path;
-    std::error_code ec;
-    if (fs::exists(nameOrPath, ec) && !fs::is_directory(nameOrPath, ec)) {
-        path = nameOrPath;
-    } else {
-        for (const auto& d : searchDirs) {
-            for (std::string cand : {nameOrPath + kExt, "lib" + nameOrPath + kExt, nameOrPath}) {
-                fs::path p = fs::path(d) / cand;
-                if (fs::exists(p, ec) && !fs::is_directory(p, ec)) {
-                    path = p.string();
-                    break;
-                }
-            }
-            if (!path.empty()) break;
-        }
-    }
+    const std::string path = find(nameOrPath, searchDirs);
     if (path.empty()) {
         if (err) *err = "robot '" + nameOrPath + "' not found (looked in the bots directory and as a path)";
         return nullptr;
     }
-    path = fs::absolute(path, ec).string();
 
     auto& c = cache();
     if (auto it = c.find(path); it != c.end())

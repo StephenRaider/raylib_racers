@@ -103,6 +103,8 @@ static int runChampionship(const rr::RaceConfig& cfg, const std::vector<std::str
         ch.twoCompounds = cfg.twoCompounds;
         ch.qualifying = cfg.qualifying;
         ch.practiceLaps = cfg.practiceLaps;
+        ch.sandbox = cfg.sandbox;
+        ch.cpuCapMs = cfg.cpuCapMs;
         ch.seed = cfg.seed;
     }
     if (ch.over()) {
@@ -152,6 +154,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     const std::string dir = rr::exeDir(argv[0]);
+    cfg.botHost = rr::botHostPath(dir);
     const std::vector<std::string> botDirs = {dir + "/bots", dir, "bots", "."};
     const std::vector<std::string> trackDirs = {dir + "/tracks", RR_SOURCE_DIR "/tracks", "tracks"};
     if (!cfg.saveLineup.empty()) {

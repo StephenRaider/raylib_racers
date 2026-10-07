@@ -43,6 +43,11 @@ struct RaceConfig {
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     bool pitsClosed = false;   // no pit stops (testing sessions)
     int session = 0;           // RR_SESSION_*: race, practice (laps is the lap limit), qualifying, test
+    // Competition rules: each robot in its own locked-down process (rr_bothost, found
+    // at botHost), and a cap on the CPU one drive() call may use, ms (0 = none).
+    bool sandbox = false;
+    float cpuCapMs = 0;
+    std::string botHost;
     // rr_race weekends: practice laps per car before the race (0 = none), and qualifying for the grid
     int practiceLaps = 0;
     bool qualifying = false;
@@ -84,5 +89,7 @@ std::string usage(const char* prog, bool viewer);
 
 // Directory of the running executable.
 std::string exeDir(const char* argv0);
+// rr_bothost next to the executables in `dir`.
+std::string botHostPath(const std::string& dir);
 
 }  // namespace rr

@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
     const std::vector<rr::EntrySpec> cliEntries = cfg.entries;
 
     const std::string dir = rr::exeDir(argv[0]);
+    cfg.botHost = rr::botHostPath(dir);
     Paths paths;
     paths.bots = {dir + "/bots", dir, "bots", "."};
     paths.tracks = {dir + "/tracks", RR_SOURCE_DIR "/tracks", "tracks"};
@@ -554,6 +555,8 @@ int main(int argc, char** argv) {
         c.twoCompounds = menu.twoCompoundsArg();
         c.qualifying = menu.champQuali;
         c.practiceLaps = menu.practiceLaps();
+        c.sandbox = cfg.sandbox;
+        c.cpuCapMs = cfg.cpuCapMs;
         c.seed = cfg.seed;
         std::error_code ec;
         std::filesystem::create_directories(seasonDir, ec);

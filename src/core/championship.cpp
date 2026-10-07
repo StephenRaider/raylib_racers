@@ -273,6 +273,8 @@ RaceConfig Championship::roundConfig(const RaceConfig& base, const std::vector<i
     c.seed = seed + (uint64_t)roundsDone();
     c.pitsClosed = false;
     c.fuelLimit = 0;
+    c.sandbox = base.sandbox || sandbox;
+    if (cpuCapMs > 0) c.cpuCapMs = cpuCapMs;
     return c;
 }
 
@@ -359,11 +361,12 @@ int Championship::roundPlace(int round, int id) const {
 
 bool Championship::save(const std::string& path, std::string* err) const {
     std::string s = "{\n  \"format\": 1,\n  \"name\": " + q(name) + ",\n";
-    char buf[256];
+    char buf[512];
     std::snprintf(buf, sizeof buf,
                   "  \"distance_km\": %.1f,\n  \"wear_rate\": %.4f,\n  \"two_compounds\": %d,\n  \"qualifying\": %s,\n"
-                  "  \"practice_laps\": %d,\n  \"seed\": %llu,\n",
-                  distanceKm, wearRate, twoCompounds, qualifying ? "true" : "false", practiceLaps, (unsigned long long)seed);
+                  "  \"practice_laps\": %d,\n  \"sandbox\": %s,\n  \"cpu_cap_ms\": %g,\n  \"seed\": %llu,\n",
+                  distanceKm, wearRate, twoCompounds, qualifying ? "true" : "false", practiceLaps,
+                  sandbox ? "true" : "false", (double)cpuCapMs, (unsigned long long)seed);
     s += buf;
     s += "  \"lineup\": " + lineup.toJson(2) + ",\n  \"rounds\": [";
     for (size_t k = 0; k < rounds.size(); ++k)
@@ -408,6 +411,8 @@ bool Championship::load(const std::string& path, Championship& out, std::string*
     c.twoCompounds = (int)v["two_compounds"].num(-1);
     c.qualifying = v["qualifying"].b;
     c.practiceLaps = (int)v["practice_laps"].num(0);
+    c.sandbox = v["sandbox"].b;
+    c.cpuCapMs = (float)v["cpu_cap_ms"].num(0);
     c.seed = (uint64_t)v["seed"].num(1);
     if (!lineupFrom(v["lineup"], c.lineup, err)) {
         if (err) *err = path + ": " + *err;

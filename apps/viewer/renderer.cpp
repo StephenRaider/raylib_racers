@@ -951,9 +951,8 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
         static std::vector<float> xy(2 * 8192);
         for (size_t i = 0; i < race.cars().size(); ++i) {
             const rr::Car& c = race.cars()[i];
-            auto fn = c.module ? c.module->api()->debug_path : nullptr;
-            if (!fn || !c.robot) continue;
-            int count = fn(c.robot, xy.data(), (int)xy.size() / 2);
+            if (!c.driver || !c.driver->hasDebugPath() || c.dnf) continue;
+            int count = c.driver->debugPath(xy.data(), (int)xy.size() / 2);
             Color col = Fade(teamColor((int)i), 0.85f);
             float h = 0.06f + 0.01f * i;
             for (int k = 0; k + 1 < count; ++k)
