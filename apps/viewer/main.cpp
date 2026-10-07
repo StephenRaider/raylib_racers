@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -383,6 +384,7 @@ int main(int argc, char** argv) {
 
     // ---- weekend: qualifying runs one car at a time, then the race starts in that order
     enum class Phase { Race, Quali, QualiDone } phase = Phase::Race;
+    const rr::Race* loggedRace = nullptr;  // the race whose log has been written
     std::vector<rr::EntrySpec> weekendEntries;
     std::vector<float> qualiTime;
     int qualiCar = 0;
@@ -391,6 +393,7 @@ int main(int argc, char** argv) {
         q.entries = {weekendEntries[k]};
         q.laps = 3;  // out lap and two flying laps
         q.fuelLimit = menu.stats().fuelPerLap * 3.6f;
+        q.twoCompounds = 0;  // the tyre rule is for the race only
         return q;
     };
     auto refreshQualiLines = [&]() {
@@ -544,6 +547,28 @@ int main(int argc, char** argv) {
             }
 
             if (phase == Phase::Quali && race->isOver()) finishQuali(false);
+            // The race log: results, lap times and positions, and every pit stop
+            // with the algorithm's reason, saved once when the race ends.
+            if (phase == Phase::Race && race->isOver() && loggedRace != race.get() && !shotMode) {
+                loggedRace = race.get();
+                std::string path = cfg.jsonOut;
+                if (path.empty()) {
+                    const std::string logDir = dir + "/race_logs";
+                    std::error_code ec;
+                    std::filesystem::create_directories(logDir, ec);
+                    char stamp[32];
+                    const std::time_t now = std::time(nullptr);
+                    std::strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", std::localtime(&now));
+                    path = logDir + "/race_" + stamp + "_" + race->config().track + ".json";
+                }
+                if (race->writeJson(path, 0)) {
+                    st.logPath = std::filesystem::path(path).lexically_normal().string();
+                    std::printf("race log: %s\n", st.logPath.c_str());
+                } else {
+                    st.logPath.clear();
+                }
+            }
+            if (!race->isOver() && loggedRace == race.get()) loggedRace = nullptr;
             if (phase != Phase::Race) st.focus = 0;
             else if (st.followLeader) st.focus = race->order()[0];
             renderer->updateCamera(*race, st.focus, st.camera, shotMode ? 1.0f / 60 : frameDt);

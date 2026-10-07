@@ -60,6 +60,17 @@ struct Car {
     RRControl pitOrder{};       // the request as it was when service started
     double pitLaneTime = 0;     // total time spent in the pit lane
     std::vector<int> pitLaps;   // lap on which each stop happened
+    // What happened at each stop, for the race log.
+    struct StopLog {
+        int lap = 0;
+        double time = 0;
+        float fuelBefore = 0, fuelAdded = 0, wear[2] = {0, 0}, damage = 0, service = 0;
+        int tiresBefore = 0, tiresFitted = 0;  // RR_TIRE_*, 0 = kept
+        bool repair = false;
+        std::string reason;                    // the robot's status text as it stopped
+    };
+    std::vector<StopLog> stopLog;
+    std::vector<int> lapPositions;  // race position at the end of each lap
     float noFuelTime = 0;
 
     // blue flags and penalties
