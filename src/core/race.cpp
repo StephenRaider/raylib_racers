@@ -181,7 +181,8 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
                          "time,x,y,yaw,speed,vx,vy,yaw_rate,steer,accel,brake,gear,rpm,track_pos,angle,"
                          "dist_raced,lap,on_track,wheel_spin,fuel,wear_front,wear_rear,tire_grip,damage,pit_state,"
                          "grip_front,grip_rear,slip_front,slip_rear,accel_x,accel_y,blue_flag,temp_front,temp_rear,"
-                         "axle_grip_front,axle_grip_rear,slipstream,dirty_air,d0,d1,d2,d3,d4,d5,d6,d7\n");
+                         "axle_grip_front,axle_grip_rear,slipstream,dirty_air,d0,d1,d2,d3,d4,d5,d6,d7,"
+                         "tyre_fl,tyre_fr,tyre_rl,tyre_rr,brake_fl,brake_fr,brake_rl,brake_rr\n");
         }
     }
 
@@ -204,6 +205,7 @@ void Race::placeOnGrid() {
         c.state.fuel = c.robotCfg.initial_fuel;
         c.state.compound = c.robotCfg.tire_compound;
         c.compoundsUsed = 1 << c.state.compound;
+        for (float& t : c.state.wheelTemp) t = c.phys.blanketTemp;
         c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
         TrackLoc loc = track_.locateGlobal(c.state.pos);
         c.trackIdx = loc.idx;
@@ -336,6 +338,12 @@ void Race::computeSensors(Car& c) {
         s.tire_temp[ax] = st.tireTemp[ax];
         s.axle_grip[ax] = axleGrip(st, ax);
     }
+    for (int w = 0; w < 4; ++w) {
+        s.tire_temp_wheel[w] = st.wheelTemp[w];
+        s.brake_temp[w] = st.brakeTemp[w];
+    }
+    s.brake_temp_window[0] = c.phys.brakeTempLo;
+    s.brake_temp_window[1] = c.phys.brakeTempHi;
     s.tire_temp_window[0] = comp.tempLo;
     s.tire_temp_window[1] = comp.tempHi;
     s.ambient_temp = cfg_.ambient;
@@ -464,6 +472,8 @@ void Race::writeTelemetry(const Car& c) {
     std::fprintf(c.telemetry, ",%.1f,%.1f,%.4f,%.4f,%.3f,%.3f", s.tire_temp[0], s.tire_temp[1], s.axle_grip[0],
                  s.axle_grip[1], s.slipstream, s.dirty_air);
     for (float d : k.debug) std::fprintf(c.telemetry, ",%.4g", d);
+    for (float t : s.tire_temp_wheel) std::fprintf(c.telemetry, ",%.1f", t);
+    for (float t : s.brake_temp) std::fprintf(c.telemetry, ",%.0f", t);
     std::fputc('\n', c.telemetry);
 }
 
@@ -724,6 +734,7 @@ void Race::finishService(Car& c) {
         c.state.compound = c.pitOrder.pit_tires;
         c.compoundsUsed |= 1 << c.state.compound;
         c.state.tireWear[0] = c.state.tireWear[1] = 0;
+        for (float& t : c.state.wheelTemp) t = c.phys.blanketTemp;
         c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
         c.lapsOnTires = 0;
     }

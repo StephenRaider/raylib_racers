@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 6
-/* Robots built for ABI 2 to 5 still load: later versions only appended
+#define RR_ABI_VERSION 7
+/* Robots built for ABI 2 to 6 still load: later versions only appended
  * fields to RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -288,6 +288,14 @@ typedef struct RRSensors {
 
     /* --- ABI 6 --- */
     int pits_closed;           /* 1: pit requests are ignored in this session */
+
+    /* --- ABI 7 --- */
+    /* Each tyre and brake: front left, front right, rear left, rear right.
+     * Brake heat soaks into the tyres through the wheel rims, with a lag of a
+     * minute or so; tire_temp is the mean of each axle's two tyres. */
+    float tire_temp_wheel[4];  /* C */
+    float brake_temp[4];       /* C, disc */
+    float brake_temp_window[2];/* C: below it the brakes bite less, above it they fade */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */

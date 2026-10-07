@@ -136,6 +136,13 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
     if (st.showHelp) drawHelp();
 }
 
+// Blue cold, green inside the window, amber just over it, red hot.
+Color tempColor(float t, float lo, float hi, float amber) {
+    return t < lo ? Color{110, 170, 240, 255}
+         : t <= hi ? Color{90, 200, 120, 255}
+         : t <= hi + amber ? kAccent : Color{240, 70, 60, 255};
+}
+
 Color compoundColor(int compound) {
     return compound == RR_TIRE_SOFT ? Color{230, 50, 50, 255}
          : compound == RR_TIRE_HARD ? Color{235, 235, 240, 255}
@@ -259,7 +266,7 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
 
 void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, float atY) {
     const rr::Car& c = race.cars()[st.focus];
-    const float w = 380, h = 276;
+    const float w = 380, h = 296;
     const float x = atX >= 0 ? atX : GetScreenWidth() - w - 16, y = atY >= 0 ? atY : GetScreenHeight() - h - 16;
     panel({x, y, w, h});
     char buf[128];
@@ -356,22 +363,30 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
         float wear = c.state.tireWear[axle];
         float bx = x + 96 + axle * 104;
         text(axle == 0 ? "F" : "R", bx, ty, 13, kDim);
-        Rectangle wb = {bx + 14, ty + 3, 50, 9};
+        Rectangle wb = {bx + 14, ty + 3, 34, 9};
         DrawRectangleRec(wb, Fade(WHITE, 0.12f));
         Color wc = wear > 0.7f ? Color{240, 70, 60, 255} : (wear > 0.45f ? kAccent : Color{90, 200, 120, 255});
         DrawRectangleRec({wb.x, wb.y, wb.width * (1 - wear), wb.height}, wc);  // tyre life left
-        // temperature against the compound's window: blue cold, green in it, amber / red hot
-        float t = c.state.tireTemp[axle];
-        Color tc = t < comp.tempLo ? Color{110, 170, 240, 255}
-                   : t <= comp.tempHi ? Color{90, 200, 120, 255}
-                   : t <= comp.tempHi + 10 ? kAccent : Color{240, 70, 60, 255};
-        std::snprintf(buf, sizeof buf, "%.0f", t);
-        text(buf, bx + 68, ty - 1, 14, tc, false, true);
+        // each tyre's temperature (left, right) against the compound's window
+        for (int side = 0; side < 2; ++side) {
+            const float t = c.state.wheelTemp[2 * axle + side];
+            std::snprintf(buf, sizeof buf, "%.0f", t);
+            text(buf, bx + 54 + side * 26, ty - 1, 14, tempColor(t, comp.tempLo, comp.tempHi, 10), false, true);
+        }
+    }
+    // brake discs: FL FR RL RR
+    const float by = ty + 20;
+    text("BRAKES", x + 16, by, 13, kDim);
+    for (int wh = 0; wh < 4; ++wh) {
+        const float t = c.state.brakeTemp[wh];
+        static const char* kWheel[4] = {"FL", "FR", "RL", "RR"};
+        std::snprintf(buf, sizeof buf, "%s %.0f", kWheel[wh], t);
+        text(buf, x + 80 + wh * 70, by - 1, 13, tempColor(t, c.phys.brakeTempLo, c.phys.brakeTempHi, 100), false, true);
     }
     std::snprintf(buf, sizeof buf, "%d laps", c.lapsOnTires);
     textRight(buf, x + w - 16, ty - 1, 14, kDim, false, true);
     // strategy: the algorithm's next planned stop, and the two-compound rule
-    float sy = ty + 24;
+    float sy = ty + 44;
     if (k.pit_window[0] > 0 && !c.finished) {
         if (k.pit_window[1] > k.pit_window[0]) std::snprintf(buf, sizeof buf, "NEXT STOP  LAP %d-%d", k.pit_window[0], k.pit_window[1]);
         else std::snprintf(buf, sizeof buf, "NEXT STOP  LAP %d", k.pit_window[0]);

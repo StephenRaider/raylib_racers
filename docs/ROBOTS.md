@@ -47,7 +47,7 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 6; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 7; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -103,6 +103,9 @@ Tyre temperature and other cars' air (ABI 4):
 |---|---|
 | `tire_temp[2]` | front, rear tyre temperature, °C. Tyres leave the warmers at 80 °C (race start and after a stop) |
 | `tire_temp_window[2]` | the fitted compound's working window, low and high, °C: soft 85-105, medium 95-115, hard 105-125. Below it the tyre loses 0.25% grip per °C and grains (wear +1.5% per °C); above it 0.2% per °C and blisters (wear +6% per °C, so 17 °C over doubles the wear) |
+| `tire_temp_wheel[4]` | (ABI 7) each tyre's temperature, °C: front left, front right, rear left, rear right. Each tyre's grip follows its own temperature; `tire_temp` is the mean of each axle's two |
+| `brake_temp[4]` | (ABI 7) each brake disc's temperature, °C, same order. Braking heats the discs; their heat soaks through the wheel rims into the tyres with a lag of a minute or so, so heavy braking warms the tyres a little over the following laps |
+| `brake_temp_window[2]` | (ABI 7) 350-1000 °C. Below it the brakes bite less (75% of full force when stone cold), above it they fade (0.2% per °C, down to 60%) |
 | `axle_grip[2]` | front, rear grip multiplier right now: compound x wear x temperature |
 | `ambient_temp` | air and track temperature (`--ambient`, default 25 °C) |
 | `slipstream` | drag reduction from the car ahead, 0 .. 0.45 (strongest right behind it, gone 60 m back or 3.5 m to the side) |
