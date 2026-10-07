@@ -152,8 +152,8 @@ The physics is in `src/core/car.cpp`; the numbers a strategy needs are:
   at 300 km/h. A good lap of the circuit is about 53 s, ~305 km/h at the end of
   the straight, ~4.4 g in fast corners.
 - **Fuel** burns in proportion to engine work: about 2.3 l per lap of the
-  circuit at racing speed, so the 58 l tank lasts about 25 laps. A full tank
-  adds 44 kg. `--fuel-rate X` scales consumption.
+  circuit at racing speed. The tank holds 65 l on every track, which is about
+  28 laps of the circuit and fewer on longer tracks. A full tank adds 49 kg. `--fuel-rate X` scales consumption.
 - **Tyres** wear in proportion to sliding work (cornering, braking, wheelspin).
   A medium loses about 0.02-0.03 per lap of the circuit, and a worn tyre slides
   more, so the rate grows through a stint. Grip falls 7% from new to wear 0.7,

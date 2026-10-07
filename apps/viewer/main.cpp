@@ -497,7 +497,7 @@ int main(int argc, char** argv) {
         menu.autoTires = RR_TIRE_HARD;
         if (life == 0 || menu.compoundLife[RR_TIRE_SOFT] >= menu.laps) menu.autoTires = RR_TIRE_SOFT;
         else if (menu.compoundLife[RR_TIRE_MEDIUM] >= menu.laps) menu.autoTires = RR_TIRE_MEDIUM;
-        menu.autoFuel = std::min(menu.tank(), std::ceil(menu.fuelPerLapEst * (menu.laps + 1) * 10) / 10);
+        menu.autoFuel = std::min(menu.tankLitres, std::ceil(menu.fuelPerLapEst * (menu.laps + 1) * 10) / 10);
         if (menu.testStatsPage && (figuresFor != menu.testStats || figuresTrack != menu.track || figuresLife != (float)life)) {
             FigureInputs in;
             in.fuelPerLap = ts.fuelPerLap * cfg.fuelRate;

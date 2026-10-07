@@ -123,7 +123,6 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
             }
             applyDevelopment(rules, tokens, c.phys);
         }
-        c.phys.fuelCapacity *= track_.length() / kTankTrackLength;  // the tank suits the track
         c.module = RobotModule::load(e.robot, botDirs, err);
         if (!c.module) return false;
         const RRRobotApi* api = c.module->api();

@@ -39,7 +39,7 @@
     "brakeFront": 0.6,
     "engineBrake": 35,
     "drivetrainEff": 0.9,
-    "fuelCapacity": 58,
+    "fuelCapacity": 65,
     "fuelDensity": 0.75,
     "fuelPerJoule": 1.2e-07,
     "wearPerJoule": 2e-08,

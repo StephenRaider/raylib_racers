@@ -325,7 +325,7 @@ void change(MenuState& m, MenuState::Row row, int dir, bool big, MenuAction& act
             const float step = big ? 5.0f : 1.0f;
             float f = m.testFuel > 0 ? m.testFuel : std::round(m.autoFuel);
             f += dir * step;
-            m.testFuel = f < 1.0f ? 0.0f : std::min(f, m.tank());  // below 1 L: back to automatic
+            m.testFuel = f < 1.0f ? 0.0f : std::min(f, m.tankLitres);  // below 1 L: back to automatic
             break;
         }
         case Row::TestStats: m.testStatsPage = true; break;

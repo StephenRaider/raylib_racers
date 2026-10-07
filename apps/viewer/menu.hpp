@@ -44,7 +44,7 @@ struct MenuState {
     int cars = 20, maxCars = 20;
     int teams = 10, drivers = 2;   // the grid: teams x drivers per team (cars is the product)
     int row = 0;       // selected row; the last is Start
-    float tankLitres = 58;  // on a track of rr::kTankTrackLength; tank() scales it to this track
+    float tankLitres = 65;
 
     // Grid page: one livery slot, algorithm and starting tyre per car.
     bool gridPage = false;
@@ -138,8 +138,7 @@ struct MenuState {
         int life = kTyreLives[tyreLife];
         return life == 0 ? 0.0f : baseTyreLife() / life;
     }
-    float tank() const { return stats().length > 0 ? tankLitres * stats().length / 3176.0f : tankLitres; }
-    float lapsPerTank() const { return tank() / std::max(0.1f, stats().fuelPerLap); }
+    float lapsPerTank() const { return tankLitres / std::max(0.1f, stats().fuelPerLap); }
     // Picks the tyre-life option nearest the given wear rate.
     void setWearRate(float rate);
     bool twoCompoundRule() const { return tyreRule == 1 || (tyreRule == 0 && laps > 20); }
