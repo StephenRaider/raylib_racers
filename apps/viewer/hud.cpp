@@ -105,6 +105,22 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         panel({x, 12, w, 30});
         text(buf, x + 14, 18, 15, st.followLeader ? kAccent : kText, true);
     }
+    if (st.lights > -1.5f) {
+        // Start lights: one red light a second, then all out and GO.
+        const int on = st.lights > 0 ? std::min(5, (int)(6.0f - st.lights)) : 0;
+        const float r = 22, gap = 16, w = 5 * (2 * r) + 4 * gap + 40;
+        const float x = (GetScreenWidth() - w) / 2, y = GetScreenHeight() * 0.16f;
+        panel({x, y, w, 2 * r + 40});
+        for (int i = 0; i < 5; ++i) {
+            const Vector2 c = {x + 20 + r + i * (2 * r + gap), y + 20 + r};
+            DrawCircleV(c, r, Color{30, 30, 34, 255});
+            if (i < on) DrawCircleV(c, r - 3, Color{235, 30, 30, 255});
+        }
+        if (st.lights <= 0) {
+            const char* go = "GO";
+            text(go, (GetScreenWidth() - width(go, 44, true)) / 2, y + 2 * r + 52, 44, Color{80, 220, 110, 255}, true);
+        }
+    }
     if (st.paused && !race.isOver()) {
         const char* p = "PAUSED";
         float w = width(p, 44, true);

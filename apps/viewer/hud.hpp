@@ -22,6 +22,7 @@ struct QualiLine {
 
 struct HudState {
     bool paused = false;
+    float lights = -1;            // start lights: >0 counting down (5 red lights, one a second), <=0 lights out
     float timeScale = 1.0f;
     int focus = 0;
     bool followLeader = true;  // keep the camera on whoever is P1

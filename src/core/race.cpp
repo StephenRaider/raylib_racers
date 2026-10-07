@@ -799,12 +799,13 @@ RRControl Race::coolDownControl(Car& c) {
         // The robot drives; the host holds it to cool-down pace.
         k = c.control;
         k.pit_request = 0;
+        // While others are still racing, keep racing pace: a slow car on the line gets in their way.
         const float over = c.state.vx - kCoolSpeed;
-        if (over > 0) {
+        if (over_ && over > 0) {
             k.accel = 0;
             k.brake = std::max(k.brake, clampf(over * 0.005f, 0.0f, 0.06f));  // ease off, no brake test for the cars still racing
         }
-        if (!pit && (c.finished || time_ > overTime_ + 20.0)) {
+        if (!pit && over_ && time_ > overTime_ + 5.0) {
             // No pit lane: pull over to the side and stop.
             k.accel = 0;
             k.brake = std::max(k.brake, 0.3f);
@@ -851,10 +852,12 @@ RRControl Race::coolDownControl(Car& c) {
 
     // Speed: an easy pace for the corners ahead, the pit limit in the lane,
     // then stop at the parking spot.
-    float vT = kCoolSpeed;
-    for (float a = 0; a < 120.0f; a += 4.0f) {
+    // (Racing pace until the pit lane while the others are still racing.)
+    float vT = over_ ? kCoolSpeed : 1e9f;
+    const float lat = over_ ? 1.1f : 2.5f;
+    for (float a = 0; a < (over_ ? 120.0f : 250.0f); a += 4.0f) {
         float kap = std::fabs(track_.at(track_.indexAt(c.trackS + a)).curvature);
-        float vc = kap > 1e-4f ? std::sqrt(1.1f * 9.81f / kap) : 1e9f;
+        float vc = kap > 1e-4f ? std::sqrt(lat * 9.81f / kap) : 1e9f;
         vT = std::min(vT, std::sqrt(vc * vc + 2 * 6.0f * a));
     }
     if (pit) {
@@ -872,7 +875,7 @@ RRControl Race::coolDownControl(Car& c) {
     // Gentle inputs: no wheelspin, no locked wheels.
     float err = vT - v;
     if (vT < 0.3f) k.brake = v > 2.0f ? 0.4f : 1.0f;
-    else if (err > 0) k.accel = c.state.wheelSpin > 0 ? 0.0f : clampf(0.15f + 0.1f * err, 0, 0.5f);
+    else if (err > 0) k.accel = c.state.wheelSpin > 0 ? 0.0f : clampf(0.15f + 0.1f * err, 0, over_ ? 0.5f : 1.0f);
     else k.brake = clampf(-0.08f * err, 0, 0.4f);
     return k;
 }

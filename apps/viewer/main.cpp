@@ -572,6 +572,7 @@ int main(int argc, char** argv) {
 
     // ---- weekend: qualifying runs one car at a time, then the race starts in that order
     enum class Phase { Race, Quali, QualiDone, Test } phase = Phase::Race;
+    const rr::Race* lightsFor = nullptr;  // the race the start lights were shown for
     const rr::Race* loggedRace = nullptr;  // the race whose log has been written
     std::vector<rr::EntrySpec> weekendEntries;
     std::vector<int> weekendSlots, weekendIds;  // each entry's livery and championship driver id
@@ -1299,7 +1300,21 @@ int main(int argc, char** argv) {
 
             // ---- simulation: fixed steps, as many as real time x speed asks for
             if (!shotMode) {
-                if (!st.paused) {
+                // Start lights before every race: the cars wait on the grid, then go when the lights go out.
+                if (phase == Phase::Race && race.get() != lightsFor) {
+                    lightsFor = race.get();
+                    st.lights = race->time() <= 0 ? 6.0f : -2.0f;
+                } else if (phase != Phase::Race) {
+                    st.lights = -2.0f;
+                }
+                if (st.lights > 0 && !st.paused) {
+                    st.lights -= frameDt;
+                    if (st.lights <= 0) simDebt = 0;
+                } else if (st.lights > -2.0f && !st.paused) {
+                    st.lights -= frameDt;  // "GO" shows for a moment while the cars pull away
+                }
+                if (st.lights > 0) {
+                } else if (!st.paused) {
                     simDebt += frameDt * st.timeScale;
                     long long steps = (long long)(simDebt / race->dt());
                     simDebt -= steps * race->dt();
