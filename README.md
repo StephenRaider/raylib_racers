@@ -4,6 +4,7 @@ A small, fast TORCS-style racing simulator for testing driving algorithms.
 Cars are driven by **robots**: shared libraries written in C or C++ that read
 sensors and return steering, throttle and brake. Races run headless at hundreds
 of times real time for experiments, or in a raylib 3D viewer to watch them.
+Version 1.0 is tagged `v1.0`.
 
 ![Start of a race, TV camera](docs/images/start.jpg)
 
@@ -25,26 +26,38 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   the car's fuel, tyre and pit state, and the nearest cars for racecraft.
   Robots can take parameters from the command line, print status text, log
   debug values to telemetry and draw a path in the viewer.
-- **Three example robots** (`bots/`): `simple` (C, sensors only), `gapfollow`
+- **Example robots** (`bots/`): `simple` (C, sensors only), `gapfollow`
   (C++, sensors only) and `racingline` (C++, plans a minimum-curvature line and
   speed profile, plans its own pit strategy from the timing screen, overtakes
-  and defends).
+  and defends). In practice it runs each tyre compound, measures pace, wear and
+  fuel, and uses what it learned in qualifying and the race. The default grid
+  drivers John Fone, Spongebob, Dave and Granny Doris are racingline with their
+  own driving styles.
+- **Race weekends and championships**: practice, qualifying and race, with
+  notes a robot keeps across the weekend; seasons over a calendar of tracks
+  with saved standings and lineups. Robots run in a sandbox with a CPU cap
+  (see [docs/COMPETITION.md](docs/COMPETITION.md)).
 - **`rr_race`**: headless runner with JSON results and per-car CSV telemetry.
   A 5-car, 3-lap race on the 3.2 km circuit takes about one second.
 - **`rr_viewer`**: raylib 3D viewer with low-poly F1 cars in team liveries
   (steering, rolling wheels), sun shadows, fog, procedural textures, kerbs,
-  barriers, pit lane and boxes, scenery, seven cameras, a timing
-  tower (with tyres and pit status), minimap and a per-car panel with fuel and
-  tyre wear.
+  barriers, pit lane and boxes, scenery, eight cameras including an automatic
+  director (F9), three graphics quality levels (F10), a timing tower (with
+  tyres and pit status), minimap, a per-car panel with fuel, tyre wear and
+  tyre and brake temperatures, a menu for quick races, weekends, championships
+  and testing, and race-end windows (results, positions, lap chart, lap times,
+  strategy, incidents).
 
 | | |
 |---|---|
+| ![Director camera](docs/images/director.jpg) | ![Overview camera](docs/images/overview.jpg) |
 | ![Cinematic camera](docs/images/cinematic.jpg) | ![Helicopter camera](docs/images/helicopter.jpg) |
 | ![Orbit camera](docs/images/orbit.jpg) | ![TV camera](docs/images/tv.jpg) |
 | ![Pit stop: the car is held in its box while the crew works](docs/images/pitstop.jpg) | ![Pit lane: speed limiter on, heading for the box](docs/images/pitlane.jpg) |
-| ![Race setup menu](docs/images/menu.jpg) | ![Grid page: livery, algorithm and start tyres per car, and the style stats button](docs/images/grid.jpg) |
+| ![Quick race menu](docs/images/menu.jpg) | ![Grid page: livery, algorithm and start tyres per car](docs/images/grid.jpg) |
+| ![Championship: calendar, rules and saved seasons](docs/images/championship.jpg) | ![Race end: results with the fastest lap](docs/images/results.jpg) |
 | ![Testing: telemetry dashboard while scrubbing a run](docs/images/testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/testing_track.jpg) |
-| ![Race end: results with the fastest lap](docs/images/results.jpg) | ![Race end: lap chart](docs/images/lapchart.jpg) |
+| ![Race end: lap chart](docs/images/lapchart.jpg) | |
 
 ## Build
 
@@ -330,7 +343,7 @@ src/core/                track, car physics, race, robot loader, CLI, car specs
 apps/headless/           rr_race
 apps/viewer/             rr_viewer (renderer, HUD)
 bots/                    example robots and shared helpers
-tracks/                  circuit.trk, oval.trk
+tracks/                  circuit, oval and seven real-inspired circuits (.trk)
 specs/                   car specs and development rules (JSON)
 assets/fonts/            DejaVu fonts for the HUD (see DEJAVU_LICENSE.txt)
 assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see its README)
@@ -339,8 +352,8 @@ assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see it
 ## Current limits and next steps
 
 - Flat tracks only (no elevation or banking), one car model.
-- Racecraft is basic: overtaking between closely matched cars is rare. `gapfollow` and `simple` never pit, so in long
-  races they run out of fuel or tyres.
-- Possible next steps: more tracks and a track editor, per-team car setups,
-  batch tournaments and parameter sweeps with a summary report, a Python
-  binding for learning-based drivers, replay files, and a TORCS track importer.
+- Overtaking between closely matched cars is still rare. `gapfollow` and
+  `simple` never pit, so in long races they run out of fuel or tyres.
+- Possible next steps: a track editor, per-team car setups, parameter sweeps
+  with a summary report, a Python binding for learning-based drivers, replay
+  files, and a TORCS track importer.
