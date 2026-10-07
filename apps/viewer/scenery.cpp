@@ -3,7 +3,9 @@
 // simple shapes and placed from the track's seed, so a track always looks the same.
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <random>
 #include <unordered_map>
@@ -649,6 +651,39 @@ void Renderer::drawTrees(bool shadowPass) {
     treeMat_.maps[MATERIAL_MAP_DIFFUSE].texture = Texture2D{whiteTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
 }
 
+namespace {
+// The OBJ files tools/import_trees.py writes: v/vt/vn per corner, then one face per triangle
+// in order. Read directly (raylib's OBJ loader uploads the mesh twice and warns).
+Mesh loadTreeObj(const std::string& path) {
+    Mesh m{};
+    char* text = LoadFileText(path.c_str());
+    if (!text) return m;
+    std::vector<float> v, t, n;
+    for (char* line = text; *line;) {
+        char* end = line;
+        while (*end && *end != '\n') ++end;
+        float a = 0, b = 0, c = 0;
+        if (line[0] == 'v' && line[1] == ' ' && std::sscanf(line + 2, "%f %f %f", &a, &b, &c) == 3) v.insert(v.end(), {a, b, c});
+        else if (line[0] == 'v' && line[1] == 't' && std::sscanf(line + 3, "%f %f", &a, &b) == 2) t.insert(t.end(), {a, 1 - b});
+        else if (line[0] == 'v' && line[1] == 'n' && std::sscanf(line + 3, "%f %f %f", &a, &b, &c) == 3) n.insert(n.end(), {a, b, c});
+        line = *end ? end + 1 : end;
+    }
+    UnloadFileText(text);
+    const int count = (int)v.size() / 3;
+    if (count == 0 || (int)t.size() != 2 * count || (int)n.size() != 3 * count) return m;
+    m.vertexCount = count;
+    m.triangleCount = count / 3;
+    m.vertices = (float*)MemAlloc(v.size() * sizeof(float));
+    m.texcoords = (float*)MemAlloc(t.size() * sizeof(float));
+    m.normals = (float*)MemAlloc(n.size() * sizeof(float));
+    std::memcpy(m.vertices, v.data(), v.size() * sizeof(float));
+    std::memcpy(m.texcoords, t.data(), t.size() * sizeof(float));
+    std::memcpy(m.normals, n.data(), n.size() * sizeof(float));
+    UploadMesh(&m, false);
+    return m;
+}
+}  // namespace
+
 // The tree models in assetsDir/scenery/trees (tools/import_trees.py). Without them the
 // scenery falls back to trees built from simple shapes.
 void Renderer::loadTrees(const std::string& assetsDir) {
@@ -664,14 +699,9 @@ void Renderer::loadTrees(const std::string& assetsDir) {
         tm.kind = vs[i]["kind"].str();
         const mjson::Value& parts = vs[i]["parts"];
         for (size_t j = 0; j < parts.size(); ++j) {
-            Model m = LoadModel((dir + parts[j]["mesh"].str()).c_str());
-            if (m.meshCount < 1) continue;
-            // keep the mesh, drop the model's own material
-            slotMesh_.push_back(m.meshes[0]);
-            m.meshCount = 0;
-            MemFree(m.meshes);
-            m.meshes = nullptr;
-            UnloadModel(m);
+            Mesh mesh = loadTreeObj(dir + parts[j]["mesh"].str());
+            if (mesh.vertexCount == 0) continue;
+            slotMesh_.push_back(mesh);
             const std::string tn = parts[j]["texture"].str();
             size_t t = std::find(texNames.begin(), texNames.end(), tn) - texNames.begin();
             if (t == texNames.size()) {
