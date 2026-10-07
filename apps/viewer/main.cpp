@@ -381,12 +381,16 @@ int main(int argc, char** argv) {
     st.timeScale = cfg.timeScale;
     st.muted = cfg.mute;
     st.camera = (CamMode)(std::max(0, cfg.camera) % CAM_COUNT);
+    st.view.quality = cfg.quality;
     double simDebt = 0;
     int shotFrames = 0;
     std::vector<MenuHit> menuHits;
 
     if (shotMode && !inMenu && !cfg.test)
-        while (!race->cooledDown() && race->time() < cfg.screenshotAt) race->step();
+        for (int n = 0; !race->cooledDown() && race->time() < cfg.screenshotAt; ++n) {
+            race->step();
+            if (renderer && n % 4 == 3) renderer->stepEffects(*race, 0.0f);  // lay the rubber and skid marks down
+        }
     // --focus N picks a car; without it the camera follows whoever leads.
     if (cfg.focus >= 0 && cfg.focus < (int)race->cars().size()) {
         st.focus = cfg.focus;
@@ -1174,6 +1178,7 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
             if (IsKeyPressed(KEY_P)) st.view.showPaths = !st.view.showPaths;
+            if (IsKeyPressed(KEY_F10)) st.view.quality = (st.view.quality + 1) % 3;
             if (IsKeyPressed(KEY_S)) st.view.showSensors = !st.view.showSensors;
             if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
             if (IsKeyPressed(KEY_F1)) st.showHelp = !st.showHelp;
@@ -1296,6 +1301,7 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
             if (IsKeyPressed(KEY_P)) st.view.showPaths = !st.view.showPaths;
+            if (IsKeyPressed(KEY_F10)) st.view.quality = (st.view.quality + 1) % 3;
             if (IsKeyPressed(KEY_S)) st.view.showSensors = !st.view.showSensors;
             if (IsKeyPressed(KEY_M)) st.muted = !st.muted;
             if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
