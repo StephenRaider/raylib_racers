@@ -18,16 +18,16 @@ TRACKS = {
     "monza": dict(
     name="Autodromo Monzetta", length=5700, width=14, pitspeed=22,
     about="Temple of speed: long straights broken by chicanes, Curva Grande, the Lesmos, Ascari and the Parabolica.",
-    start=(0,300), runoff=9, verts=[
-        (0,1050,18,13),(45,1062,18,13),            # Rettifilo
-        (150,1450,250,14),                         # Curva Grande
-        (620,1330,22,13),(665,1300,22,13),         # Roggia
-        (860,1250,55,13),                          # Lesmo 1
-        (930,1060,50,13),                          # Lesmo 2
-        (620,330,600,13),                          # Serraglio kink
-        (560,150,55,13),(480,70,45,13),(430,-60,70,13),  # Ascari
-        (390,-850,110,15),(0,-920,230,15),         # Parabolica
-    ], names=['Rettifilo', '', 'Curva Grande', 'Roggia', '', 'Lesmo 1', 'Lesmo 2', 'Serraglio kink', 'Ascari', '', '', 'Parabolica', '']),
+    start=(0,0), runoff=9, verts=[
+        (0,1100,15,15),(40,1112,15,13),            # Rettifilo
+        (150,1800,420,14),                         # Curva Grande
+        (820,1440,20,13),(870,1450,20,13),         # Roggia
+        (1180,1430,55,13),                         # Lesmo 1
+        (1190,1200,50,13),                         # Lesmo 2
+        (1000,560,800,13),                         # Serraglio
+        (920,170,60,13),(925,40,50,13),(840,-40,60,13),  # Ascari
+        (500,-860,110,15),(0,-1060,250,15),        # Parabolica
+    ], names=['Rettifilo', '', 'Curva Grande', 'Roggia', '', 'Lesmo 1', 'Lesmo 2', 'Serraglio', 'Ascari', '', '', 'Parabolica', '']),
     "spa": dict(
     name="Ardennes Ring", length=6900, width=13, pitspeed=22,
     about="Long and fast: La Source hairpin, the Eau Rouge-Raidillon kink, Kemmel straight, Pouhon and Blanchimont.",
@@ -258,9 +258,10 @@ def plot(key, t, pts, pit, outdir):
         ax.text(x + dx / d * span * 0.05, y + dy / d * span * 0.05, name, color="#8fc8ff", fontsize=7,
                 ha="center", va="center")
     ax.set_aspect("equal")
+    ax.margins(0.08)
     ax.axis("off")
     ax.set_title(f"{t['name']}   {total / 1000:.2f} km, {min(p[2] for p in pts):g}-{max(p[2] for p in pts):g} m wide",
-                 color="white", fontsize=11)
+                 color="white", fontsize=11, pad=16)
     x0, y0 = min(xs), min(ys) - span * 0.06
     ax.plot([x0, x0 + 500], [y0, y0], color="white", linewidth=2)
     ax.text(x0 + 250, y0 - span * 0.035, "500 m", color="white", ha="center", fontsize=7)
