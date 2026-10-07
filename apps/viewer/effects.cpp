@@ -120,8 +120,10 @@ void Effects::update(const rr::Race& race, float dt) {
     }
 }
 
-void Effects::draw(Vector3 camPos) const {
-    if (level_ <= 0) return;
+void Effects::draw(const rr::Race& race, Vector3 camPos) const {
+    // Only for the race update() last saw: a race swapped since (leaving a test session,
+    // a restart) leaves race_ pointing at freed memory until the next update() resets.
+    if (level_ <= 0 || race_ != &race) return;
     auto quad = [](const std::vector<Mark>& ring, Color base) {
         size_t n = 0;
         rlBegin(RL_TRIANGLES);
@@ -141,8 +143,8 @@ void Effects::draw(Vector3 camPos) const {
     };
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
-    if (race_) {
-        const rr::Track& tr = race_->track();
+    {
+        const rr::Track& tr = race.track();
         size_t n = 0;
         rlBegin(RL_TRIANGLES);
         for (int cell : rubberCells_) {

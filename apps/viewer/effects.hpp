@@ -11,7 +11,7 @@ class Effects {
 public:
     void setLevel(int level) { level_ = level; }  // 0 off, 1 marks only, 2 everything
     void update(const rr::Race& race, float dt);
-    void draw(Vector3 camPos) const;
+    void draw(const rr::Race& race, Vector3 camPos) const;
 
 private:
     struct Mark { Vector3 a, b; float width; unsigned char alpha; };
