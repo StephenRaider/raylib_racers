@@ -1076,7 +1076,7 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     current_ = &lit_;
     drawScene(race, false);
     if (quality_ >= 1) drawGrass();
-    fx_.draw(camera.position);
+    fx_.draw(race, camera.position);
 
     // --- debug overlays (unlit)
     if (opt.showPaths) {
