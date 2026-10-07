@@ -35,7 +35,13 @@ struct RaceConfig {
     std::string jsonOut;
     std::string telemetryDir;
     bool quiet = false;
-    bool coolDown = false;  // keep running after the flag until the cars have parked in the pit lane
+    bool coolDown = false;
+    // championships (rr_race): the season file, a lineup to start it with, its calendar
+    std::string championship;
+    std::string lineup;
+    std::string rounds;
+    std::string saveLineup;    // write the --car entries as a lineup file
+    bool allRounds = false;    // race every remaining round, not just the next one  // keep running after the flag until the cars have parked in the pit lane
 
     // viewer only
     int width = 1600, height = 900;

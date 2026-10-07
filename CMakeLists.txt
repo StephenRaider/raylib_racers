@@ -33,7 +33,8 @@ add_library(rr_core STATIC
   src/core/robot_loader.cpp
   src/core/config.cpp
   src/core/spec.cpp
-  src/core/testlog.cpp)
+  src/core/testlog.cpp
+  src/core/championship.cpp)
 target_include_directories(rr_core PUBLIC include src/core)
 target_compile_options(rr_core PRIVATE ${RR_WARNINGS})
 target_compile_definitions(rr_core PUBLIC RR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -133,6 +134,19 @@ if(RR_BUILD_BOTS)
            --car racingline --dev "top_speed=8,downforce=2,pit_stop=5")
   add_test(NAME race_dev_budget COMMAND rr_race --laps 1 --quiet --car racingline --dev "top_speed=10,downforce=10,handling=10")
   set_tests_properties(race_dev_budget PROPERTIES WILL_FAIL TRUE)
+  # A two-round season: a lineup file starts it, each run races a round and saves the
+  # standings; the second run picks up where the first stopped.
+  add_test(NAME champ_lineup COMMAND rr_race --save-lineup ${CMAKE_BINARY_DIR}/ctest_lineup.json
+           --car racingline --dev "top_speed=7,brakes=3" --car dave --car spongebob --car granny)
+  add_test(NAME champ_clean COMMAND ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/ctest_season.json)
+  add_test(NAME champ_round1 COMMAND rr_race --championship ${CMAKE_BINARY_DIR}/ctest_season.json
+           --lineup ${CMAKE_BINARY_DIR}/ctest_lineup.json --rounds oval:1,circuit:1)
+  add_test(NAME champ_round2 COMMAND rr_race --championship ${CMAKE_BINARY_DIR}/ctest_season.json)
+  set_tests_properties(champ_round1 PROPERTIES DEPENDS "champ_lineup;champ_clean"
+                       PASS_REGULAR_EXPRESSION "after round 1 of 2")
+  set_tests_properties(champ_round2 PROPERTIES DEPENDS champ_round1
+                       PASS_REGULAR_EXPRESSION "after round 2 of 2")
+  set_tests_properties(champ_lineup champ_clean champ_round1 champ_round2 PROPERTIES RESOURCE_LOCK season)
 endif()
 
 # ---------------------------------------------------------------- install
