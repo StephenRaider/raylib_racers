@@ -1,6 +1,6 @@
 #pragma once
 // Track and air effects, drawn in the 3D pass: rubber laid down on the racing
-// line, skid marks, tyre smoke, dust off the track and sparks from contact.
+// line, skid marks, dust off the track and sparks from contact.
 // Viewer only: nothing here touches the simulation.
 #include <vector>
 
