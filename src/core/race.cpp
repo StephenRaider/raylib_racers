@@ -594,6 +594,7 @@ void Race::updateProgress(Car& c) {
     while (lapsNow > c.lapsDone) {
         float lt = (float)(time_ - c.lapStart);
         c.lapTimes.push_back(lt);
+        c.lapPositions.push_back(c.position);
         if (c.bestLap <= 0 || lt < c.bestLap) c.bestLap = lt;
         c.lapStart = time_;
         c.lapsDone++;
@@ -667,6 +668,20 @@ void Race::updatePit(Car& c) {
                             (kServiceBase + std::max(fuel / kFuelFlow, tyres ? kTireChange : 0.0f) +
                              (c.pitOrder.pit_repair ? kRepairPer1000 * c.state.damage / 1000.0f : 0.0f));
             c.pitState = RR_PIT_SERVICE;
+            Car::StopLog log;
+            log.lap = c.currentLap(cfg_.laps);
+            log.time = time_;
+            log.fuelBefore = c.state.fuel;
+            log.fuelAdded = fuel;
+            log.wear[0] = c.state.tireWear[0];
+            log.wear[1] = c.state.tireWear[1];
+            log.damage = c.state.damage;
+            log.service = c.serviceLeft;
+            log.tiresBefore = c.state.compound;
+            log.tiresFitted = c.pitOrder.pit_tires;
+            log.repair = c.pitOrder.pit_repair != 0;
+            log.reason = std::string(c.control.status, strnlen(c.control.status, sizeof c.control.status));
+            c.stopLog.push_back(log);
         }
         break;
     }
@@ -954,6 +969,20 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
         for (size_t k = 0; k < c.pitLaps.size(); ++k) std::fprintf(f, "%s%d", k ? ", " : "", c.pitLaps[k]);
         std::fprintf(f, "], \"lap_times\": [");
         for (size_t k = 0; k < c.lapTimes.size(); ++k) std::fprintf(f, "%s%.3f", k ? ", " : "", c.lapTimes[k]);
+        std::fprintf(f, "], \"lap_positions\": [");
+        for (size_t k = 0; k < c.lapPositions.size(); ++k) std::fprintf(f, "%s%d", k ? ", " : "", c.lapPositions[k]);
+        std::fprintf(f, "], \"stops\": [");
+        static const char* tyre[] = {"", "soft", "medium", "hard"};
+        for (size_t k = 0; k < c.stopLog.size(); ++k) {
+            const Car::StopLog& s = c.stopLog[k];
+            std::fprintf(f,
+                         "%s\n      {\"lap\": %d, \"time\": %.2f, \"fuel_before\": %.2f, \"fuel_added\": %.2f, "
+                         "\"tires_before\": \"%s\", \"tires_fitted\": \"%s\", \"wear\": [%.3f, %.3f], \"damage\": %.0f, "
+                         "\"repair\": %s, \"service\": %.2f, \"reason\": \"%s\"}",
+                         k ? "," : "", s.lap, s.time, s.fuelBefore, s.fuelAdded, tyre[s.tiresBefore & 3],
+                         tyre[s.tiresFitted & 3], s.wear[0], s.wear[1], s.damage, s.repair ? "true" : "false", s.service,
+                         jsonEscape(s.reason).c_str());
+        }
         std::fprintf(f, "]}%s\n", p + 1 < order_.size() ? "," : "");
     }
     std::fprintf(f, "  ]\n}\n");

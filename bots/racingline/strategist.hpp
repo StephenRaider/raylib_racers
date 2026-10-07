@@ -6,7 +6,7 @@
 //
 // The model is deliberately simple, one lap at a time:
 //   lap time = reference lap
-//            + compound pace (soft -1.4%, hard +1.8% of a lap, measured on the circuit)
+//            + compound pace (see Compounds: it depends on how hot the driver runs the tyres)
 //            + tyre wear (the grip lost to wear, at ~0.3 s of lap time per 1% grip)
 //            + fuel weight (~0.023 s per kg per lap)
 // and a stop costs the pit lane time plus the service (refuelling dominates).
@@ -18,8 +18,25 @@
 
 namespace strat {
 
-inline float compoundWear(int c) { return c == RR_TIRE_SOFT ? 2.0f : (c == RR_TIRE_HARD ? 0.55f : 1.0f); }
-inline float compoundPace(int c) { return c == RR_TIRE_SOFT ? -0.014f : (c == RR_TIRE_HARD ? 0.018f : 0.0f); }
+// How each compound behaves for a driver, relative to the medium: wear rate and
+// lap time. Both depend on how hot the driver runs the tyres (racingline's
+// `heat`): the soft's window is the lowest, so a driver who runs hot overheats
+// it, wearing it ~2.75x as fast as a medium for almost no pace; one who keeps
+// the tyres cool gets ~2.5% a lap from it at 2x the wear. Measured on the
+// circuit with the three racingline styles.
+struct Compounds {
+    float wear[4] = {1, 2.0f, 1, 0.55f};    // by RR_TIRE_*
+    float pace[4] = {0, -0.025f, 0, 0.035f};
+    static Compounds forHeat(float heat) {
+        const float h = std::clamp(heat / 5.0f, 0.0f, 1.0f);
+        Compounds c;
+        c.wear[RR_TIRE_SOFT] = 2.0f + 0.75f * h;
+        c.pace[RR_TIRE_SOFT] = -0.025f + 0.023f * h;
+        c.pace[RR_TIRE_HARD] = 0.035f - 0.02f * h;
+        return c;
+    }
+};
+inline int okCompound(int c) { return c >= RR_TIRE_SOFT && c <= RR_TIRE_HARD ? c : RR_TIRE_MEDIUM; }
 
 struct Model {
     float lapRef = 55;          // s, a clean lap on mediums at average fuel
@@ -32,6 +49,14 @@ struct Model {
     float fuelCap = 58, fuelDensity = 0.75f;
     float fuelSecPerKg = 0.023f;
     int maxStops = 3;
+    // What a stop costs beyond the pit lane and the service: the out lap on
+    // cold tyres and rejoining in traffic. Stops that only just pay off on
+    // paper do not pay off on track.
+    float stopRisk = 4.0f;
+    Compounds tyres;
+
+    float compoundWear(int c) const { return tyres.wear[okCompound(c)]; }
+    float compoundPace(int c) const { return tyres.pace[okCompound(c)]; }
 
     float serviceTime(float fuel, bool tyres) const {
         return serviceScale * (RR_PIT_SERVICE_BASE + std::max(fuel / RR_PIT_FUEL_RATE, tyres ? RR_PIT_TIRE_CHANGE : 0.0f));
@@ -107,12 +132,12 @@ inline Plan plan(const Model& m, int lapsLeft, int cur, float wear, float fuel, 
                 bool ok = true;
                 int mask = used;
                 for (int i = 0; i < k && ok; ++i) {
-                    const float need = len[i] * m.fuelPerLap * 1.04f + reserve;  // consumption varies a few %
+                    const float need = len[i] * m.fuelPerLap * 1.06f + reserve;  // consumption varies a few % (more on a light car)
                     const float add = std::max(0.0f, need - std::max(0.0f, ff));
                     if (std::max(0.0f, ff) + add > m.fuelCap) { ok = false; break; }
                     if (i == 0) firstFuel = add;
                     ff = std::max(0.0f, ff) + add;
-                    tt += m.pitLoss + m.serviceTime(add, true);
+                    tt += m.pitLoss + m.serviceTime(add, true) + m.stopRisk;
                     float ww = 0;
                     tt += m.stint(len[i], seq[i], ww, ff);
                     if (ww > m.wearLimit) ok = false;  // fresh stints keep the margin for surprises

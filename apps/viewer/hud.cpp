@@ -102,7 +102,7 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         float w = width(p, 44, true);
         text(p, (GetScreenWidth() - w) / 2, GetScreenHeight() * 0.2f, 44, kText, true);
     }
-    if (race.isOver()) drawResults(race);
+    if (race.isOver()) drawResults(race, st.logPath);
     if (st.showHelp) drawHelp();
 }
 
@@ -385,10 +385,10 @@ void Hud::drawHelp() {
     for (int i = 0; i < n; ++i) text(lines[i], x + 24, y + 58 + i * 24.0f, 17, kText, false, true);
 }
 
-void Hud::drawResults(const rr::Race& race) {
+void Hud::drawResults(const rr::Race& race, const std::string& logPath) {
     const auto& order = race.order();
     const float rowH = order.size() > 14 ? 27.0f : 30.0f;
-    float w = 560, h = 90 + rowH * order.size();
+    float w = 560, h = 90 + rowH * order.size() + (logPath.empty() ? 0 : 24);
     float x = (GetScreenWidth() - w) / 2, y = std::max(10.0f, std::min(GetScreenHeight() * 0.22f, (GetScreenHeight() - h) / 2));
     panel({x, y, w, h}, 0.82f);
     text("RESULTS", x + 24, y + 18, 26, kAccent, true);
@@ -413,6 +413,12 @@ void Hud::drawResults(const rr::Race& race) {
         std::snprintf(buf, sizeof buf, "best %s", lapTime(c.bestLap).c_str());
         textRight(buf, x + w - 24, ry + 2, 15, kDim, false, true);
         ry += rowH;
+    }
+    if (!logPath.empty()) {
+        const std::string line = "Race log: " + logPath;
+        float size = 13;
+        while (size > 9 && width(line.c_str(), size) > w - 48) size -= 1;
+        text(line.c_str(), x + 24, ry + 4, size, kDim);
     }
 }
 

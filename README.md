@@ -81,7 +81,16 @@ until the cars have parked after the flag).
 
 **Two-compound rule.** By default a race longer than 20 laps requires every car
 to use two different compounds; a car that finishes without doing so gets 30 s
-added. `--two-compounds on|off` forces it either way.
+added. `--two-compounds on|off` forces it either way. Qualifying runs never
+apply it.
+
+**Race logs.** `--json FILE` writes the results with every car's lap times,
+its position at the end of each lap (`lap_positions`) and a `stops` entry per
+pit stop: lap, fuel before and added, tyre wear and compound before and after,
+damage, whether it was repaired, service time and the algorithm's stated
+reason (`box (plan)`, `box (undercut)`, `box (fuel)`, `box (damage)`...). The
+viewer writes the same log when a race ends, to `race_logs/` next to
+`rr_viewer` (or to `--json FILE`), and shows the path on the results screen.
 
 The viewer opens on a **race setup** menu: track, race length, tyre life
 (in laps of the chosen track; the menu measures a lap first), number of cars

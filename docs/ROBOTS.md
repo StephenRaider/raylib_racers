@@ -209,13 +209,18 @@ when it has stopped (overcut), or answer a rival's stop.
 
 `bots/racingline` does all of this (`bots/racingline/strategist.hpp`):
 
-- **Model.** A lap costs the reference lap, plus the compound's pace (soft
-  -1.4%, hard +1.8%), plus the grip lost to wear, plus 0.023 s per kg of fuel.
-  A stop costs the measured pit lane loss plus the service time. It starts
-  from priors (the planned line's lap time, fuel from the track length, wear
-  from its `heat` setting) and replaces them with what it measures: fuel and
-  wear per lap since the last stop, clean lap times, the real time lost in the
-  pit lane.
+- **Model.** A lap costs the reference lap, plus the compound's pace, plus
+  the grip lost to wear, plus 0.023 s per kg of fuel. A stop costs the
+  measured pit lane loss plus the service time plus 4 s for the risk of
+  traffic and contact on the way in and out, so an extra stop has to earn it.
+  Compound priors depend on how hot the car runs its tyres (`heat`): for a
+  hot driver the soft barely gains anything and wears 2.75 times as fast as
+  the medium; for a cool one it is 2.5% quicker and wears twice as fast. The
+  hard wears 0.55 times as fast and is 1.5-3.5% slower. It starts from
+  priors (the planned line's lap time, fuel from the track length with a 6%
+  margin, wear from `heat`) and replaces them with what it measures: fuel and
+  wear per lap since the last stop, clean lap times, the real time lost in
+  the pit lane.
 - **Plan.** Once a lap, a few hundred metres before the pit entry, it searches
   0 to 3 more stops, the lap of the next one and every compound order, checks
   fuel and tyre life (a planned stint ends by wear 0.7, the current one may
@@ -225,11 +230,19 @@ when it has stopped (overcut), or answer a rival's stop.
   less than 1.5 s ahead, covers a car within 3 s behind that has just
   stopped, stays out when the car ahead has just stopped (overcut), and waits a
   lap if it would rejoin less than 1.5 s behind someone.
-- **Must stops.** Not enough fuel to the next pit entry, tyres past the cliff
-  or heavy damage force a stop whatever the plan says.
+- **Fuel saving.** When the car is a little short of fuel for the finish
+  (less than 13% of what it needs) and the tyres and tyre rule do not need a
+  stop anyway, it lifts and coasts into the braking zones instead of making a
+  splash stop. Coasting the last 75 m before a braking zone saves about 10%
+  fuel for 0.2 s a lap. `save=0..1` forces it (0.3 coasts 75 m, 0.6 150 m).
+- **Damage.** It stops to repair only when the time the damage will cost to
+  the flag (up to 8% of a lap at 8000 damage) is clearly more than the stop.
+- **Must stops.** Not enough fuel to the next pit entry or tyres past the
+  cliff force a stop whatever the plan says.
 - It publishes the window and the next compound in `pit_window` and
   `pit_plan_tires`; `RL_DEBUG=1` prints its plan each lap and every decision
-  to stderr.
+  to stderr. Its `status` while pitting is the reason for the stop, which the
+  race log records with each stop.
 
 It drives a blended path into and out of its box.
 

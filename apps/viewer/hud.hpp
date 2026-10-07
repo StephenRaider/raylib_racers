@@ -29,6 +29,7 @@ struct HudState {
     int qualiRun = 0, qualiRuns = 0;
     std::vector<QualiLine> quali; // sorted: timed cars by time, then the rest
     ViewOptions view;
+    std::string logPath;          // where the finished race's log was saved
 };
 
 // 2D overlay: timing tower, minimap, focused-car telemetry, help and results.
@@ -59,7 +60,7 @@ public:
     // Qualifying classification between the sessions, with the race start prompt.
     void drawQualiResults(const HudState& st);
 private:
-    void drawResults(const rr::Race& race);
+    void drawResults(const rr::Race& race, const std::string& logPath);
 
     Font regular_{}, bold_{}, mono_{};
     bool ownFonts_ = false;
