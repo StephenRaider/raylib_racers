@@ -89,6 +89,28 @@ void MenuState::styleChanged(int car) {
     if (a >= 0 && a < (int)algos.size()) teamStats[t] = statRules.parse(algos[a].stats);
 }
 
+void MenuState::algoChanged(int car) {
+    const int t = teamOfCar(car);
+    if (t < 0) return;
+    if ((int)styleCar.size() <= t) styleCar.resize(t + 1, -1);
+    styleCar[t] = car;
+}
+
+int MenuState::stylesPending() const {
+    int n = 0;
+    for (int c : styleCar) n += c >= 0;
+    return n;
+}
+
+void MenuState::applyStyles() {
+    for (int t = 0; t < (int)styleCar.size(); ++t) {
+        const int car = styleCar[t];
+        // the car may have moved to another team since (a livery swap)
+        if (car >= 0 && teamOfCar(car) == t) styleChanged(car);
+        styleCar[t] = -1;
+    }
+}
+
 namespace {
 
 // Picks a livery for a car; a livery another car wears is swapped with it.
@@ -107,7 +129,7 @@ void changeGrid(MenuState& m, int car, int col, int dir) {
     } else if (col == 1) {
         const int n = (int)m.algos.size();
         m.carAlgo[car] = ((m.carAlgo[car] + dir) % n + n) % n;
-        m.styleChanged(car);
+        m.algoChanged(car);
     } else if (car < (int)m.carTires.size()) {
         m.carTires[car] = ((m.carTires[car] + dir) % 4 + 4) % 4;  // auto, soft, medium, hard
     }
@@ -121,6 +143,7 @@ MenuAction updateGrid(MenuState& m, const std::vector<MenuHit>& hits) {
     if (IsKeyPressed(KEY_TAB)) m.gridCol = (m.gridCol + 1) % MenuState::kGridCols;
     if (rep(KEY_LEFT)) changeGrid(m, m.gridRow, m.gridCol, -1);
     if (rep(KEY_RIGHT)) changeGrid(m, m.gridRow, m.gridCol, 1);
+    if (IsKeyPressed(KEY_A)) m.applyStyles();
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_BACKSPACE))
         m.gridPage = false;
     const Vector2 mp = GetMousePosition();
@@ -128,6 +151,7 @@ MenuAction updateGrid(MenuState& m, const std::vector<MenuHit>& hits) {
         for (const MenuHit& h : hits) {
             if (!CheckCollisionPointRec(mp, {h.x, h.y, h.w, h.h})) continue;
             if (h.row == 99) { m.gridPage = false; break; }  // Done button
+            if (h.row == 94) { m.applyStyles(); break; }     // style button
             const int car = (h.row - 100) / MenuState::kGridCols, col = (h.row - 100) % MenuState::kGridCols;
             m.gridRow = car;
             m.gridCol = col;
@@ -289,7 +313,6 @@ void change(MenuState& m, MenuState::Row row, int dir, bool big, MenuAction& act
         case Row::TestCar: {
             const int n = std::max(1, (int)m.algos.size());
             m.testAlgo = ((m.testAlgo + dir) % n + n) % n;
-            if (m.testAlgo < (int)m.algos.size()) m.testStats = m.statRules.parse(m.algos[m.testAlgo].stats);
             break;
         }
         case Row::TestLivery: {

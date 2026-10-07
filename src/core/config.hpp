@@ -49,6 +49,7 @@ struct RaceConfig {
     bool mute = false;
     std::string soundTest;     // render the focused car's engine to this WAV and exit
     bool test = false;         // open in the Testing session (with --no-menu or --at: start the run)
+    int resultsView = 0;       // race-end window, 0-based
     int testView = 0;          // testing screen: 0 dashboard, 1 driving, 2 session, 3 track and events
     float scrubAt = -1;        // testing screen: show this moment of the run (screenshots)
     std::string page;          // setup page to open: stats, runs (screenshots)

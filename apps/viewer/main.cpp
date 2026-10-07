@@ -45,14 +45,14 @@ std::unique_ptr<rr::Race> makeRace(const rr::RaceConfig& cfg, const Paths& paths
 // other robot library found in the bot folders (your own robots show up here).
 std::vector<Algorithm> listAlgorithms(const Paths& paths) {
     std::vector<Algorithm> algos = {
-        // The racingline family first: the default grid uses these four.
-        // Each style has the team stats that suit it (40 points over 8 stats): the
-        // aggressive driver needs tyre management, the steady one can spend on speed.
-        {"racingline", "racingline", "", ""},
-        {"racingline aggressive", "racingline", "grip=0.85,brake=0.75,push=1.3,attack=1.4,heat=15",
-         "tire_management=8,pit_stop=4,fuel_efficiency=4,brakes=4"},
-        {"racingline safe", "racingline", "grip=0.75", ""},
-        {"racingline steady", "racingline", "grip=0.7,brake=0.6,heat=0", "tire_management=3,top_speed=6,acceleration=6"},
+        // The racingline family first: the default grid uses these four. Each has
+        // the team stats that suit its style (40 points over 8 stats), applied with
+        // the menu's style button: Spongebob needs tyre management, Granny Doris can
+        // spend on speed.
+        {"John Fone", "racingline", "", ""},
+        {"Spongebob", "spongebob", "", "tire_management=8,pit_stop=4,fuel_efficiency=4,brakes=4"},
+        {"Dave", "dave", "", ""},
+        {"Granny Doris", "granny", "", "tire_management=3,top_speed=6,acceleration=6"},
         {"gapfollow", "gapfollow", ""},
         {"gapfollow safe", "gapfollow", "speed=0.85"},
         {"gapfollow steady", "gapfollow", "speed=0.8"},
@@ -351,6 +351,7 @@ int main(int argc, char** argv) {
     if (!shotMode && !audio.init()) std::fprintf(stderr, "note: no audio device, running without sound\n");
 
     HudState st;
+    st.resultsWindow = std::clamp(cfg.resultsView, 0, 5);
     st.timeScale = cfg.timeScale;
     st.muted = cfg.mute;
     st.camera = (CamMode)(std::max(0, cfg.camera) % CAM_COUNT);
@@ -739,6 +740,13 @@ int main(int argc, char** argv) {
     }
     if (inMenu && cfg.page == "stats") { menu.session = 2; menu.testStatsPage = true; }
     if (inMenu && cfg.page == "runs") { menu.session = 2; menu.runsPage = true; }
+    if (inMenu && cfg.page == "grid") {
+        menu.gridPage = true;
+        menu.gridRow = 1;
+        menu.gridCol = 1;
+        menu.carAlgo[1] = 0;  // show a pending style change
+        menu.algoChanged(1);
+    }
 
     bool quit = false;
     while (!WindowShouldClose() && !quit) {
@@ -939,8 +947,16 @@ int main(int argc, char** argv) {
                 if (IsKeyPressed(KEY_ONE + k)) pick(race->order()[k]);
             if (IsKeyPressed(KEY_L)) st.followLeader = !st.followLeader;
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                const int tab = race->isOver() ? hud->resultsTabAt(GetMousePosition()) : -1;
                 const int car = hud->towerCarAt(*race, st, GetMousePosition());
-                if (car >= 0) pick(car);
+                if (tab >= 0) st.resultsWindow = tab;
+                else if (car >= 0) pick(car);
+            }
+            // race-end windows
+            if (race->isOver()) {
+                if (IsKeyPressed(KEY_RIGHT_BRACKET) || IsKeyPressed(KEY_PAGE_DOWN)) st.resultsWindow = (st.resultsWindow + 1) % 6;
+                if (IsKeyPressed(KEY_LEFT_BRACKET) || IsKeyPressed(KEY_PAGE_UP)) st.resultsWindow = (st.resultsWindow + 5) % 6;
+                if (IsKeyPressed(KEY_G)) st.showResults = !st.showResults;
             }
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
             for (int k = 0; k < CAM_COUNT && k < 7; ++k)

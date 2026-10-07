@@ -59,8 +59,10 @@ std::string usage(const char* prog, bool viewer) {
              "  --sound-test FILE     render 25 s of engine sound from --at seconds to a WAV, no window\n"
              "  --test                open the Testing session for the first --car (with --no-menu: start the run)\n"
              "  --test-view N         testing screen: 0 dashboard, 1 driving, 2 session, 3 track and events\n"
+             "  --results N           race-end window: 1 results, 2 positions, 3 lap chart, 4 lap times,\n"
+             "                        5 strategy, 6 incidents\n"
              "  --scrub SECONDS       testing screen: show that moment of the run (for screenshots)\n"
-             "  --page stats|runs     open a testing setup page (for screenshots)\n"
+             "  --page grid|stats|runs  open a setup page (for screenshots)\n"
              "Keys: Tab/Left/Right focus car, L follow leader, C or F2-F8 camera, Space pause, +/- speed, M mute, R restart, Esc menu, H HUD, F1 help\n";
     }
     return u;
@@ -130,6 +132,7 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (viewer && a == "--sound-test") cfg.soundTest = need(i, a);
             else if (viewer && a == "--test") cfg.test = true;
             else if (viewer && a == "--test-view") cfg.testView = std::stoi(need(i, a));
+            else if (viewer && a == "--results") cfg.resultsView = std::stoi(need(i, a)) - 1;
             else if (viewer && a == "--scrub") cfg.scrubAt = std::stof(need(i, a));
             else if (viewer && a == "--page") cfg.page = need(i, a);
             else if (viewer && a == "--screenshot") cfg.screenshot = need(i, a);

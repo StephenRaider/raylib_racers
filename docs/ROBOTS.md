@@ -284,7 +284,7 @@ It drives a blended path into and out of its box.
   all clamped to that space; when a pass is squeezed shut the car drops back
   behind instead of forcing it.
 - **Aggression**: `attack` (default 1, 0.5 to 2) scales the following gap and
-  how early a pass starts; the viewer's "racingline aggressive" uses 1.4.
+  how early a pass starts; the `spongebob` robot (racingline with other defaults) uses 1.4.
 - **Blue flags**: keep to the side away from the lapping car, never attack
   while being lapped, and lift when it is close and the road ahead is not a
   slow corner (`rr_blue_flag_side`).
