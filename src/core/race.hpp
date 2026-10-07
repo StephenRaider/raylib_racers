@@ -20,6 +20,8 @@ struct Car {
     std::shared_ptr<RobotModule> module;
     void* robot = nullptr;
     RRRobotConfig robotCfg{};
+    std::shared_ptr<std::vector<unsigned char>> memory;  // the weekend memory the robot writes to
+    bool sessionEnded = false;  // session_end() called
 
     // physics
     CarParams phys{};
@@ -168,6 +170,7 @@ private:
     void updatePit(Car& c);
     void updateBlueFlags();
     RRControl coolDownControl(Car& c);
+    void endSession(Car& c);
     void wake(Car& c) const;  // slipstream and dirty air behind other cars
     void finishService(Car& c);
     float wrapDs(float ds) const;

@@ -98,12 +98,17 @@ struct MenuState {
     bool testing() const { return session == 2; }
     bool champ() const { return session == 3; }
     int tyreRule = 0;      // two-compound rule: 0 automatic (races over 20 laps), 1 on, 2 off
+    // Practice before qualifying (weekends and championship rounds): laps per car, alone.
+    static constexpr int kPractice[] = {0, 3, 5, 10, 15, 20, 30};
+    static constexpr int kNumPractice = sizeof(kPractice) / sizeof(kPractice[0]);
+    int practice = 4;      // index into kPractice (15 laps)
+    int practiceLaps() const { return kPractice[practice]; }
 
     // The rows of the setup page depend on the session.
     enum class Row { Track, Laps, TyreLife, Teams, Drivers, Session, TyreRule, Grid, Stats, Start,
                      TestCar, TestLivery, TestTyres, TestFuel, TestStats, TestRuns,
                      SaveLineup, LoadLineup,
-                     ChampName, Round, AddRound, ChampDistance, ChampWear, ChampQuali, Season };
+                     ChampName, Round, AddRound, ChampDistance, ChampWear, ChampQuali, Season, Practice };
     std::vector<Row> rows() const;
     int rowOf(Row r) const;     // index in rows(), -1 if not shown
     int rowIndex(int row) const;  // which Round / Season a row is (rows of the same kind before it)

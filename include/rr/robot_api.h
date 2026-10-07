@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 7
-/* Robots built for ABI 2 to 6 still load: later versions only appended
+#define RR_ABI_VERSION 8
+/* Robots built for ABI 2 to 7 still load: later versions only appended
  * fields to RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -51,6 +51,15 @@ extern "C" {
  * Temperature: -0.25% grip per C below the window, -0.2% per C above (at most -20%);
  * wear x(1 + 0.06 per C above the window), x(1 + 0.015 per C below it).
  * Tyres come off the warmers at 80 C (race start and after a stop). */
+/* Sessions (ABI 8). A race weekend runs practice, then qualifying, then the
+ * race; each car practises and qualifies alone. */
+#define RR_SESSION_RACE 0
+#define RR_SESSION_PRACTICE 1    /* alone on track, up to session_laps laps, any tyres, pits open */
+#define RR_SESSION_QUALIFYING 2  /* alone on track: an out lap and two flying laps */
+#define RR_SESSION_TEST 3        /* testing mode: alone, recorded, pits closed */
+/* Bytes of weekend memory the host gives each car (RRRobotConfig.memory). */
+#define RR_SESSION_MEMORY (256 * 1024)  /* keep in step with rr::RR_SESSION_MEMORY_BYTES */
+
 #define RR_TIRE_SOFT 1
 #define RR_TIRE_MEDIUM 2
 #define RR_TIRE_HARD 3
@@ -105,6 +114,18 @@ typedef struct RRPitInfo {
     float speed_limit;     /* m/s, enforced between lane_start_s and lane_end_s */
 } RRPitInfo;
 
+/* A corner of the track (ABI 8), numbered from the start line like the
+ * turns of a real circuit, so a robot can keep notes per corner. The host
+ * finds them from the centreline curvature; ids are the same in every
+ * session of a weekend. */
+typedef struct RRTurn {
+    int id;              /* 1, 2, ... in race order */
+    int direction;       /* +1 left, -1 right */
+    float start_s, apex_s, end_s;  /* along the centreline, m (end_s may be less than start_s across the line) */
+    float min_radius;    /* m, at the apex */
+    float angle;         /* rad turned through, always positive */
+} RRTurn;
+
 typedef struct RRTrackInfo {
     const char* name;
     float length;        /* centreline length, m */
@@ -112,6 +133,10 @@ typedef struct RRTrackInfo {
     int num_points;
     const RRTrackPoint* points;
     RRPitInfo pit;
+
+    /* --- ABI 8 --- */
+    int num_turns;
+    const RRTurn* turns;
 } RRTrackInfo;
 
 typedef struct RRCarSpec {
@@ -200,6 +225,17 @@ typedef struct RRRobotConfig {
     /* --- ABI 6 --- */
     int pits_closed;        /* 1: no pit stops in this session (testing): plan to run to the flag */
     int starting_fuel_set;  /* 1: the team chose the starting fuel (already in initial_fuel); changes are ignored */
+
+    /* --- ABI 8 --- */
+    int session;            /* RR_SESSION_* this car is about to drive */
+    int session_laps;       /* laps in this session (practice: the lap limit) */
+    /* Weekend memory: RR_SESSION_MEMORY bytes the host keeps for this car from
+     * practice through qualifying to the race, then wipes. Zeroed at the start
+     * of the weekend. Write notes here (braking points, grip per turn, tyre
+     * life); it is the only thing that carries between sessions, and robots
+     * may not keep files of their own. */
+    unsigned char* memory;
+    int memory_size;
 } RRRobotConfig;
 
 typedef struct RRSensors {
@@ -296,6 +332,12 @@ typedef struct RRSensors {
     float tire_temp_wheel[4];  /* C */
     float brake_temp[4];       /* C, disc */
     float brake_temp_window[2];/* C: below it the brakes bite less, above it they fade */
+
+    /* --- ABI 8 --- */
+    int session;               /* RR_SESSION_* */
+    int turn;                  /* id of the turn we are in (RRTurn.id), 0 on a straight */
+    int next_turn;             /* id of the next turn ahead (the current one's successor when in a turn) */
+    float next_turn_ds;        /* m along the track to next_turn's start */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */
@@ -324,6 +366,19 @@ typedef struct RRControl {
     int pit_plan_tires; /* compound planned for that stop (0 = none / undecided) */
 } RRControl;
 
+/* How a session went for this car (ABI 8). */
+typedef struct RRSessionSummary {
+    int session;          /* RR_SESSION_* */
+    int laps_done;
+    float best_lap;       /* s, 0 if none */
+    float total_time;     /* s on track */
+    int finished;         /* 1: took the flag (practice: reached the lap limit) */
+    float lap_times[64];  /* the first 64 laps, s */
+    int tire_compound;    /* fitted at the end */
+    float tire_wear[2];   /* front, rear at the end */
+    float fuel;           /* litres left */
+} RRSessionSummary;
+
 typedef struct RRRobotApi {
     int abi_version;      /* must be RR_ABI_VERSION */
     const char* name;
@@ -340,6 +395,12 @@ typedef struct RRRobotApi {
      * planned path. Write up to max_points (x, y) pairs into xy and return how
      * many were written. Called from the render loop, never during drive(). */
     int (*debug_path)(void* self, float* xy, int max_points);
+
+    /* --- ABI 8 --- optional, may be NULL */
+    /* Called once when this car's session ends (the flag, or the session is
+     * stopped), before destroy(): the last chance to write notes to the
+     * weekend memory. */
+    void (*session_end)(void* self, const struct RRSessionSummary* summary);
 } RRRobotApi;
 
 typedef const RRRobotApi* (*RRRobotEntryFn)(void);

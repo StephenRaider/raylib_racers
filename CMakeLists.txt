@@ -34,7 +34,8 @@ add_library(rr_core STATIC
   src/core/config.cpp
   src/core/spec.cpp
   src/core/testlog.cpp
-  src/core/championship.cpp)
+  src/core/championship.cpp
+  src/core/weekend.cpp)
 target_include_directories(rr_core PUBLIC include src/core)
 target_compile_options(rr_core PRIVATE ${RR_WARNINGS})
 target_compile_definitions(rr_core PUBLIC RR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -153,6 +154,17 @@ if(RR_BUILD_BOTS)
            --car racingline --car dave --rounds oval,circuit --distance 6.4)
   set_tests_properties(champ_distance PROPERTIES DEPENDS champ_clean RESOURCE_LOCK season PASS_REGULAR_EXPRESSION "Round 1 of 2: [^\n]*, 3 laps")
   set_tests_properties(champ_lineup champ_clean champ_round1 champ_round2 PROPERTIES RESOURCE_LOCK season)
+  # Weekends: memcheck refuses to start unless the weekend memory carried the
+  # earlier sessions (practice, then qualifying) into the race.
+  rr_add_robot(memcheck tests/memcheck/memcheck.c)
+  rr_output(memcheck "${RR_OUT}/test_bots")  # not offered in the viewer's menus
+  add_test(NAME weekend_memory COMMAND rr_race --track oval --laps 1 --quiet --practice 1 --qualifying
+           --car $<TARGET_FILE:memcheck> --params expect=2 --car $<TARGET_FILE:memcheck> --params expect=2)
+  add_test(NAME weekend_memory_fresh COMMAND rr_race --track oval --laps 1 --quiet --car $<TARGET_FILE:memcheck> --params expect=0)
+  # practice + qualifying + race reach the race with memory from two sessions, not three
+  add_test(NAME weekend_memory_wrong COMMAND rr_race --track oval --laps 1 --quiet --practice 1 --qualifying
+           --car $<TARGET_FILE:memcheck> --params expect=3)
+  set_tests_properties(weekend_memory_wrong PROPERTIES WILL_FAIL TRUE)
 endif()
 
 # ---------------------------------------------------------------- install

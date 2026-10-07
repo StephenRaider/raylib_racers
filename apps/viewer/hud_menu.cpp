@@ -289,10 +289,19 @@ void Hud::drawRaceSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
           m.row == row);
     segmented({r.x + 20, y + 46, r.width - 40, 42}, {"Auto", "Two compounds", "Free"}, m.tyreRule, m.row == row, row, hits);
     y += 110;
+    if (m.weekend()) {
+        row = m.rowOf(Row::Practice);
+        field(r.x + 20, y + 2, lw, "Practice", m.practiceLaps() ? "each car alone, any tyres" : "straight to qualifying",
+              m.row == row);
+        if (m.practiceLaps()) std::snprintf(val, sizeof val, "%d laps", m.practiceLaps());
+        else std::snprintf(val, sizeof val, "off");
+        stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+        y += 66;
+    }
     // the session explained
     DrawRectangle((int)r.x + 20, (int)y, (int)r.width - 40, 1, kLine);
     const char* about = m.weekend()
-        ? "Each car runs alone in qualifying: an out lap and two flying laps. The fastest lap takes pole."
+        ? "Each car runs alone, in practice and in qualifying (an out lap and two flying laps). The fastest qualifying lap takes pole."
         : "The race starts in the order of the grid page. Pick Race weekend for qualifying.";
     // wrap
     std::string line, word, txt = about;
@@ -442,6 +451,12 @@ void Hud::drawChampSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectang
     row = m.rowOf(Row::ChampQuali);
     field(rr2.x + 20, y + 10, lw, "Qualifying", "", m.row == row);
     segmented({rr2.x + rr2.width - 20 - ctl, y, ctl, 40}, {"Off", "On"}, m.champQuali ? 1 : 0, m.row == row, row, hits);
+    y += 52;
+    row = m.rowOf(Row::Practice);
+    field(rr2.x + 20, y + 2, lw, "Practice", m.practiceLaps() ? "laps per car, before qualifying" : "", m.row == row);
+    if (m.practiceLaps()) std::snprintf(buf, sizeof buf, "%d laps", m.practiceLaps());
+    else std::snprintf(buf, sizeof buf, "off");
+    stepper({rr2.x + rr2.width - 20 - ctl, y, ctl, 42}, buf, m.row == row, row, hits);
     drawGridCard(m, hits, {a.x + cw + gap, rr2.y + rr2.height + gap, cw, a.height - rr2.height - gap}, false);
 
     // ---- saved seasons

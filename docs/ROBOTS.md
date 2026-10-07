@@ -26,7 +26,7 @@ static void drive(void* self, const RRSensors* in, RRControl* out) {
 
 static void destroy(void* self) { free(self); }
 
-static const RRRobotApi api = {RR_ABI_VERSION, "tiny", "me", create, drive, destroy, NULL};
+static const RRRobotApi api = {RR_ABI_VERSION, "tiny", "me", create, drive, destroy, NULL, NULL};
 RR_EXPORT const RRRobotApi* rr_robot_entry(void) { return &api; }
 ```
 
@@ -47,15 +47,53 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 7; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 8; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
 | `debug_path(self, xy, max)` | viewer frames (optional) | write up to `max` (x, y) points; the viewer draws them in the car's colour |
+| `session_end(self, summary)` | end of the session, before `destroy` (optional, ABI 8) | how the session went (`RRSessionSummary`: laps, best lap, lap times, tyres, fuel); the last chance to write notes to the weekend memory |
 
 The same library can drive several cars in one race (`--car racingline --car
 racingline`), so keep state in the pointer you return from `create()`, not in
 globals.
+
+## Race weekends (ABI 8)
+
+A weekend is three sessions, and every car gets a fresh robot (`create()` to
+`destroy()`) for each one:
+
+| Session | `config->session` | What happens |
+|---|---|---|
+| Practice | `RR_SESSION_PRACTICE` | alone on track, up to `config->session_laps` laps (15 by default). Any tyres, pits open, no tyre-set limit: try compounds, measure wear and fuel |
+| Qualifying | `RR_SESSION_QUALIFYING` | alone: an out lap and two flying laps. The best lap sets the grid |
+| Race | `RR_SESSION_RACE` | everyone together |
+
+Testing mode runs with `RR_SESSION_TEST`. `sensors->session` repeats the
+session while driving.
+
+**Weekend memory.** `config->memory` points at `config->memory_size`
+(`RR_SESSION_MEMORY`, 256 KiB) bytes that belong to your car for the whole
+weekend: zeroed before practice, the same bytes in qualifying and the race,
+thrown away afterwards. It is the only thing that carries from one session to
+the next (robots may not keep files), so put your notes there: braking points,
+grip per corner, how many laps a set of softs lasted. The pointer stays valid
+until `destroy()`. A quick race with no weekend gets a fresh, zeroed memory.
+
+```c
+typedef struct { unsigned magic; int practice_laps; float soft_wear_per_lap; } Notes;
+Notes* notes = (Notes*)config->memory;
+if (notes->magic != 0x4E4F5445) { memset(notes, 0, sizeof *notes); notes->magic = 0x4E4F5445; }
+```
+
+**Turns.** `track->turns` lists the corners (`track->num_turns` of them),
+numbered from the start line like a real circuit's: `RRTurn` gives each one's
+direction, start, apex and end distance, tightest radius and the angle it turns
+through. They come from the track's shape, so the ids are the same in every
+session of the weekend, which makes them good keys for per-corner notes. While
+driving, `sensors->turn` is the turn you are in (0 on a straight),
+`sensors->next_turn` the next one ahead and `sensors->next_turn_ds` the
+distance to its start.
 
 ## Sensors (`RRSensors`)
 

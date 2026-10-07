@@ -5,10 +5,60 @@
 #include "../../src/core/championship.hpp"
 #include "../../src/core/race.hpp"
 #include "../../src/core/testlog.hpp"
+#include "../../src/core/weekend.hpp"
 
 #ifndef RR_SOURCE_DIR
 #define RR_SOURCE_DIR "."
 #endif
+
+static std::string lapStr(float t) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%d:%06.3f", (int)(t / 60), t - 60 * (int)(t / 60));
+    return b;
+}
+
+// The weekend before a race: gives every car its weekend memory, runs practice
+// (each car alone) and qualifying (each car alone, the times set the grid).
+// Reorders rc.entries, and `ids` alongside them, into the grid. False on error.
+static bool runWeekend(rr::RaceConfig& rc, std::vector<int>& ids, int practiceLaps, bool qualifying,
+                       const std::vector<std::string>& bots, const std::vector<std::string>& tracks) {
+    rr::startWeekend(rc.entries);
+    std::string err;
+    auto label = [&](size_t i) { return rc.entries[i].name.empty() ? rc.entries[i].robot : rc.entries[i].name; };
+    if (practiceLaps > 0) {
+        std::printf("Practice, up to %d laps each\n", practiceLaps);
+        for (size_t i = 0; i < rc.entries.size(); ++i) {
+            const float best = rr::runAlone(rr::practiceConfig(rc, rc.entries[i], practiceLaps), bots, tracks, &err);
+            if (best < 0) {
+                std::fprintf(stderr, "error: practice: %s\n", err.c_str());
+                return false;
+            }
+            std::printf("  %-24s best %s\n", label(i).c_str(), best > 0 ? lapStr(best).c_str() : "no time");
+        }
+    }
+    if (!qualifying) return true;
+    std::printf("Qualifying\n");
+    std::vector<float> times;
+    for (size_t i = 0; i < rc.entries.size(); ++i) {
+        const float best = rr::runAlone(rr::qualiConfig(rc, rc.entries[i], 0), bots, tracks, &err);
+        if (best < 0) {
+            std::fprintf(stderr, "error: qualifying: %s\n", err.c_str());
+            return false;
+        }
+        times.push_back(best);
+    }
+    std::vector<rr::EntrySpec> entries;
+    std::vector<int> grid;
+    int p = 0;
+    for (int i : rr::gridOrder(times)) {
+        std::printf("  %2d. %-24s %s\n", ++p, label(i).c_str(), times[i] > 0 ? lapStr(times[i]).c_str() : "no time");
+        entries.push_back(rc.entries[i]);
+        grid.push_back(ids[i]);
+    }
+    rc.entries = entries;
+    ids = grid;
+    return true;
+}
 
 // --championship: races the season's next round (or all of them) and saves the file.
 static int runChampionship(const rr::RaceConfig& cfg, const std::vector<std::string>& bots,
@@ -51,6 +101,8 @@ static int runChampionship(const rr::RaceConfig& cfg, const std::vector<std::str
         }
         ch.wearRate = cfg.wearRate;
         ch.twoCompounds = cfg.twoCompounds;
+        ch.qualifying = cfg.qualifying;
+        ch.practiceLaps = cfg.practiceLaps;
         ch.seed = cfg.seed;
     }
     if (ch.over()) {
@@ -59,8 +111,10 @@ static int runChampionship(const rr::RaceConfig& cfg, const std::vector<std::str
         return 0;
     }
     do {
-        const std::vector<int> grid = ch.nextGrid();
+        std::vector<int> grid = ch.nextGrid();
         rr::RaceConfig rc = ch.roundConfig(cfg, grid);
+        if ((ch.practiceLaps > 0 || ch.qualifying) && !runWeekend(rc, grid, ch.practiceLaps, ch.qualifying, bots, tracks))
+            return 1;
         rr::Race race;
         if (!race.setup(rc, bots, tracks, &err)) {
             std::fprintf(stderr, "error: round %d: %s\n", ch.roundsDone() + 1, err.c_str());
@@ -114,10 +168,19 @@ int main(int argc, char** argv) {
     }
     if (!cfg.championship.empty()) return runChampionship(cfg, botDirs, trackDirs);
     if (cfg.entries.empty()) {
-        cfg.entries = {{"racingline", "", "", "", ""}, {"gapfollow", "", "", "", ""}, {"simple", "", "", "", ""}};
+        for (const char* r : {"racingline", "gapfollow", "simple"}) {
+            rr::EntrySpec e;
+            e.robot = r;
+            cfg.entries.push_back(e);
+        }
         if (!cfg.quiet) std::printf("no --car given, racing the example robots\n");
     }
 
+    if (cfg.practiceLaps > 0 || cfg.qualifying) {
+        std::vector<int> ids(cfg.entries.size());
+        for (size_t i = 0; i < ids.size(); ++i) ids[i] = (int)i;
+        if (!runWeekend(cfg, ids, cfg.practiceLaps, cfg.qualifying, botDirs, trackDirs)) return 1;
+    }
     rr::Race race;
     if (!race.setup(cfg, botDirs, trackDirs, &err)) {
         std::fprintf(stderr, "error: %s\n", err.c_str());

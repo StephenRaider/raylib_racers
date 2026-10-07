@@ -1,9 +1,12 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace rr {
+
+constexpr int RR_SESSION_MEMORY_BYTES = 256 * 1024;  // RR_SESSION_MEMORY
 
 struct EntrySpec {
     std::string robot;   // name in the bots directory, or a path to a shared library
@@ -13,7 +16,15 @@ struct EntrySpec {
     std::string dev;     // development tokens, e.g. "top_speed=3,handling=-1"
     int tires = 0;       // starting compound chosen by the team (RR_TIRE_*), 0 = the robot decides
     float fuel = 0;      // starting fuel chosen by the team, litres; 0 = the robot decides
+    // Weekend memory (RRRobotConfig.memory): whoever runs the weekend makes one
+    // per car and passes it to every session; null = a fresh one for this session.
+    std::shared_ptr<std::vector<unsigned char>> memory;
 };
+
+// A fresh, zeroed weekend memory.
+inline std::shared_ptr<std::vector<unsigned char>> newWeekendMemory() {
+    return std::make_shared<std::vector<unsigned char>>(RR_SESSION_MEMORY_BYTES, 0);
+}
 
 struct RaceConfig {
     std::string track = "circuit";
@@ -31,6 +42,10 @@ struct RaceConfig {
     std::string devRules = "development";  // rules for --dev, file or name in specs/
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     bool pitsClosed = false;   // no pit stops (testing sessions)
+    int session = 0;           // RR_SESSION_*: race, practice (laps is the lap limit), qualifying, test
+    // rr_race weekends: practice laps per car before the race (0 = none), and qualifying for the grid
+    int practiceLaps = 0;
+    bool qualifying = false;
     std::string testLog;       // save car 0's run to this test-run folder (see testlog.hpp)
     std::string jsonOut;
     std::string telemetryDir;

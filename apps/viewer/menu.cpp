@@ -30,13 +30,16 @@ std::vector<MenuState::Row> MenuState::rows() const {
     if (champ()) {
         std::vector<Row> r = {Row::Session};
         for (size_t i = 0; i < calendar.size(); ++i) r.push_back(Row::Round);
-        for (Row x : {Row::AddRound, Row::ChampName, Row::ChampDistance, Row::ChampWear, Row::TyreRule, Row::ChampQuali,
+        for (Row x : {Row::AddRound, Row::ChampName, Row::ChampDistance, Row::ChampWear, Row::TyreRule, Row::ChampQuali, Row::Practice,
                       Row::Teams, Row::Drivers, Row::Grid, Row::Stats, Row::SaveLineup, Row::LoadLineup})
             r.push_back(x);
         for (size_t i = 0; i < seasons.size(); ++i) r.push_back(Row::Season);
         r.push_back(Row::Start);
         return r;
     }
+    if (weekend())
+        return {Row::Session, Row::Track, Row::Laps, Row::TyreLife, Row::TyreRule, Row::Practice, Row::Teams, Row::Drivers,
+                Row::Grid, Row::Stats, Row::SaveLineup, Row::LoadLineup, Row::Start};
     return {Row::Session, Row::Track, Row::Laps, Row::TyreLife, Row::TyreRule, Row::Teams, Row::Drivers, Row::Grid,
             Row::Stats, Row::SaveLineup, Row::LoadLineup, Row::Start};
 }
@@ -422,6 +425,7 @@ void change(MenuState& m, MenuState::Row row, int dir, bool big, MenuAction& act
         case Row::ChampDistance: m.champKm = std::clamp(m.champKm + dir, 0, MenuState::kNumDistances - 1); break;
         case Row::ChampWear: m.champWear = std::clamp(m.champWear + dir, 0, MenuState::kNumWears - 1); break;
         case Row::ChampQuali: m.champQuali = !m.champQuali; break;
+        case Row::Practice: m.practice = std::clamp(m.practice + dir, 0, MenuState::kNumPractice - 1); break;
         case Row::TyreRule: m.tyreRule = (m.tyreRule + dir + 3) % 3; break;
         case Row::Grid: m.gridPage = true; break;
         case Row::TestCar: {
