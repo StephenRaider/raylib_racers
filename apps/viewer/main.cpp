@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <set>
 
@@ -72,6 +73,19 @@ std::vector<Algorithm> listAlgorithms(const Paths& paths) {
         if (!known) algos.push_back({name, name, ""});
     }
     return algos;
+}
+
+// The `name` line of a track file, or "" if it has none.
+std::string trackTitle(const std::string& file) {
+    std::ifstream in(file);
+    std::string line;
+    while (std::getline(in, line))
+        if (line.rfind("name ", 0) == 0) {
+            std::string t = line.substr(5);
+            while (!t.empty() && (t.back() == '\r' || t.back() == ' ')) t.pop_back();
+            return t;
+        }
+    return "";
 }
 
 // Every *.trk in the track folders, by file name.
@@ -295,6 +309,8 @@ int main(int argc, char** argv) {
     for (const std::string& t : listTracks(paths)) {
         TrackStats ts;
         ts.file = ts.title = t;
+        const std::string title = trackTitle(rr::trackFile(t, paths.tracks));
+        if (!title.empty()) ts.title = title;  // the real name before calibration fills the rest
         menu.tracks.push_back(ts);
         if (t == cfg.track) menu.track = (int)menu.tracks.size() - 1;
     }
@@ -1071,6 +1087,11 @@ int main(int argc, char** argv) {
                 if (menu.weekend() && !quit) {
                     phase = Phase::Quali;
                     weekendEntries = cfg.entries;
+                    // the grid's liveries, in entry order (a season round fills these in startRound)
+                    const int n = (int)weekendEntries.size();
+                    weekendSlots.assign(menu.carLivery.begin(), menu.carLivery.begin() + n);
+                    weekendIds.resize(n);
+                    for (int i = 0; i < n; ++i) weekendIds[i] = i;
                     qualiTime.assign(weekendEntries.size(), 0.0f);
                     if (!startQualiRun(0)) quit = true;
                 }
