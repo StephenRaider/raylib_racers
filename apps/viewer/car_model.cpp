@@ -114,12 +114,17 @@ Texture2D CarModel::livery(int slot) {
     const auto& table = liveryTable();
     if (slot >= 0 && slot < (int)table.size()) {
         Image img = LoadImage(table[slot].file.c_str());
-        if (img.data) {
-            if (img.width > 1024) ImageResize(&img, 1024, 1024 * img.height / img.width);
+        if (img.data && img.width > 0 && img.height > 0) {
+            // Any size or pixel format works: the UVs are 0-1, so a livery is always drawn
+            // square. (Keeping the aspect gave a 0-pixel-high image for a wide one.)
+            ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+            if (img.width != 1024 || img.height != 1024) ImageResize(&img, 1024, 1024);
             t = LoadTextureFromImage(img);
             UnloadImage(img);
             GenTextureMipmaps(&t);
             SetTextureFilter(t, TEXTURE_FILTER_TRILINEAR);
+        } else if (img.data) {
+            UnloadImage(img);
         }
     }
     liveries_[slot] = t;
