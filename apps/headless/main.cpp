@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "../../src/core/race.hpp"
+#include "../../src/core/testlog.hpp"
 
 #ifndef RR_SOURCE_DIR
 #define RR_SOURCE_DIR "."
@@ -39,8 +40,12 @@ int main(int argc, char** argv) {
 
     auto t0 = std::chrono::steady_clock::now();
     double nextReport = 30.0;
+    rr::TestRecorder rec;
+    const bool testLog = !cfg.testLog.empty();
+    if (testLog) rec.begin(race, 0);
     while (!race.isOver()) {
         race.step();
+        if (testLog) rec.update(race);
         if (!cfg.quiet && race.time() >= nextReport) {
             const auto& lead = race.cars()[race.order()[0]];
             std::printf("  t=%5.0fs  leader %-16s lap %d/%d\n", race.time(), lead.name.c_str(),
@@ -61,6 +66,33 @@ int main(int argc, char** argv) {
                     race.time() - flag);
     }
     double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (testLog) {
+        // the first car's run, saved like the viewer's Testing mode does
+        rec.finish();
+        const rr::Car& c = race.cars()[0];
+        const rr::RaceConfig& rc = race.config();
+        rr::TestSetup su;
+        su.track = rc.track;
+        su.trackTitle = race.track().name();
+        su.robot = rc.entries[0].robot;
+        su.label = rc.entries[0].name.empty() ? c.robotName : rc.entries[0].name;
+        su.params = rc.entries[0].params;
+        su.dev = rc.entries[0].dev;
+        su.laps = rc.laps;
+        su.compound = c.robotCfg.tire_compound;
+        su.fuel = c.robotCfg.initial_fuel;
+        su.wearRate = rc.wearRate;
+        su.fuelRate = rc.fuelRate;
+        su.ambient = rc.ambient;
+        rr::TestStore store(cfg.testLog);
+        const std::string end = c.dnf ? c.dnfReason : c.finished ? "finished" : "time limit";
+        const int id = store.save(su, rec, end, c.finished, &err);
+        if (!id) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+        std::printf("test run %d saved in %s/run_%04d\n", id, cfg.testLog.c_str(), id);
+    }
 
     race.printResults(stdout);
     if (!cfg.quiet)

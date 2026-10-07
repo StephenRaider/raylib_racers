@@ -107,6 +107,51 @@ closer, goes for gaps sooner and runs its tyres hotter), safe (`grip=0.75`) and
 steady (`grip=0.7,brake=0.6,heat=0`);
 `gapfollow` and `simple` are still on the Grid page.
 
+**Testing** (the Session row's third choice) puts one car on track alone, with
+no pit stops, to collect data and train a single algorithm. The setup page
+picks the algorithm, the car (livery), the tyres and the fuel (Auto: the
+softest compound that lasts the run, and the fuel for the run plus a lap with
+this car's stats; Left/Right sets your own, Backspace goes back to Auto) and
+the car's stats. While you change the stats, the **Car stats** page shows what
+they do to the car: engine power, top speed, 0-200 km/h and braking distance
+(measured with the car physics), downforce, drag, cornering grip, agility,
+pit service time, fuel use and tyre life on this track, with the figures the
+selected stat changes highlighted.
+
+On track, the testing screen shows the session (every lap with its gap to
+the best, fuel and tyre wear, and the delta to the best lap as you drive),
+the car panel, a **dashboard** of eight graphs (speed, throttle and brake,
+grip use, delta to the best lap, lap times, fuel with its average per lap and
+where it runs dry, tyre wear with its average per lap and the lap it reaches
+the cliff, and a track map coloured by speed) and a **timeline** of the run
+with each lap and every flagged moment (off track, contact, oversteer,
+understeer, wheelspin, spin, stopped). Click a graph, or press `Tab`, for a
+full window: **Driving** (speed and gear, pedals, steering, grip use and delta
+along the lap, against the best lap or any lap with `[` `]`), **Session**
+(lap times, sector times, fuel, tyre wear, tyre temperatures over the run) and
+**Track and events** (the lap on the map coloured by speed, pedals or grip
+use with `M`, the list of events and a lap table).
+
+Scrubbing: pause with `Space` and drag the timeline or use `Left`/`Right`
+(1 s, `Shift` 10 s, `Ctrl` one sample), `PgUp`/`PgDn` (the same spot a lap
+earlier or later), `Home`/`End`; the car, the graphs and the panels show that
+moment. `Space` plays on from there and goes back to live when it catches up.
+Clicking a lap, an event or a point on a Driving graph jumps there. After the
+run the whole of it can be scrubbed and played. `F` fast-forwards (as fast as
+the computer runs), `R` restarts, `G` hides the graphs, `Esc` closes a window
+or goes back to the menu.
+
+Every run is saved, in `test_runs/` next to `rr_viewer`: `runs.json` lists
+every run's setup and results (best and average lap, fuel and wear per lap,
+all lap times) and is never pruned; `run_NNNN/summary.json` has the lap table
+and the events; `run_NNNN/telemetry.csv` the car 25 times a second, kept for
+the 10 newest runs of each algorithm. `test_runs/README.md` explains every
+column, so the folder can be handed to an AI tool as it is. The **Saved runs**
+page lists them, newest first or by best lap, on this track or all, loads a
+run's setup back into the menu (`Enter`) and replays its telemetry (`V`).
+`rr_race --test-log DIR --no-pits --car ...` records and saves a run the same
+way without a window.
+
 The engine sound is synthesised from each car's revs and throttle (a V10 with
 overrun pops and a rev limiter), for the cars nearest the camera. `M` mutes it;
 `rr_viewer --sound-test out.wav --at 20` writes 25 s of it to a file.
@@ -121,7 +166,9 @@ paths, `S` shows the focused car's range finders, `M` mutes, `Esc` returns to
 the menu, `H` hides the HUD, `F1` help.
 
 To grab a frame without a window manager (e.g. under `xvfb-run`):
-`rr_viewer --screenshot shot.png --at 30 --camera 1`.
+`rr_viewer --screenshot shot.png --at 30 --camera 1`. With `--test` the
+viewer opens on the Testing session (and `--no-menu` or `--at` starts the
+run); `--test-view N` and `--scrub T` pick the testing window and moment.
 
 ## Car physics
 

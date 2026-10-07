@@ -128,6 +128,9 @@ public:
     int laps() const { return cfg_.laps; }
     const Track& track() const { return track_; }
     const std::vector<Car>& cars() const { return cars_; }
+    // For replays in the viewer only: overwrite a car's pose to show a recorded
+    // moment, and restore it before the next step().
+    std::vector<Car>& carsForReplay() { return cars_; }
     const std::vector<int>& order() const { return order_; }  // car indices by position
     const RaceConfig& config() const { return cfg_; }
     const std::vector<Contact>& contacts() const { return contacts_; }

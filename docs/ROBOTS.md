@@ -45,7 +45,7 @@ be named as `--car tiny`.
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (the host also loads robots built for ABI 2) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 6; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -169,7 +169,25 @@ and `config->tire_compound`. When the team has picked the starting tyres
 `tire_compound` already holds that choice and changing it has no effect: plan
 the fuel around it. `config` also tells you the race (ABI 5): `race_laps`,
 `two_compound_rule`, the `fuel_rate` and `wear_rate` multipliers and
-`ambient_temp`.
+`ambient_temp`. In testing sessions (ABI 6) `pits_closed` is 1 (also in the
+sensors): pit requests are ignored, so plan to run to the flag; and when the
+team has chosen the starting fuel (`--fuel`, the viewer's Testing setup)
+`starting_fuel_set` is 1 and `initial_fuel` already holds it.
+
+**Testing an algorithm.** The viewer's Testing session runs one car alone and
+graphs everything (see the README). The same recording works without a window:
+
+```sh
+./rr_race --car myrobot --params "grip=0.8" --laps 10 --no-pits --fuel 25 \
+          --tires medium --quiet --test-log test_runs
+```
+
+saves `test_runs/run_NNNN/summary.json` (lap and sector times, fuel and wear
+per lap, tyre temperatures, top and minimum speed, throttle and brake use,
+and the moments worth a look: off track, contact, oversteer, understeer,
+wheelspin, spin, stopped, with the lap and distance) and `telemetry.csv` (the
+car 25 times a second). `test_runs/runs.json` collects every run's setup and
+times, so a script or an AI tool can compare parameter sweeps.
 
 **The pit lane.** `track->pit` describes it: `side` (+1 left), the stretch of
 track it runs along (`entry_s` -> `lane_start_s` -> `lane_end_s` -> `exit_s`), the
