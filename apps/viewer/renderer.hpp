@@ -7,7 +7,8 @@
 #include "race.hpp"
 
 // Follow, cinematic, trackside TV, helicopter, top-down, free orbit, whole-track overview.
-enum CamMode { CAM_CHASE = 0, CAM_CINEMATIC, CAM_TV, CAM_HELI, CAM_TOP, CAM_ORBIT, CAM_OVERVIEW, CAM_COUNT };
+// CAM_DIRECTOR is the viewer's TV director picking cars and shots; the renderer only sees the shot it picked.
+enum CamMode { CAM_CHASE = 0, CAM_CINEMATIC, CAM_TV, CAM_HELI, CAM_TOP, CAM_ORBIT, CAM_OVERVIEW, CAM_DIRECTOR, CAM_COUNT };
 const char* camName(CamMode mode);
 
 struct ViewOptions {
@@ -97,7 +98,7 @@ private:
     float shadowRadius_ = 400;
 
     // camera state
-    Vector3 chasePos_{}, chaseTarget_{};
+    Vector3 chasePos_{}, chaseTarget_{};  // smoothed offsets from the car (so speed adds no lag)
     bool chaseInit_ = false;
     int lastFocus_ = -1;
     CamMode lastMode_ = CAM_COUNT;

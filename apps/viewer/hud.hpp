@@ -27,6 +27,7 @@ struct HudState {
     int focus = 0;
     bool followLeader = true;  // keep the camera on whoever is P1
     CamMode camera = CAM_CHASE;
+    std::string directorCaption;  // what the director cam is showing
     bool showHud = true;
     bool showHelp = false;
     bool muted = false;
