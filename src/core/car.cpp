@@ -36,7 +36,8 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(rollingResist), F(wheelRadius), F(finalDrive), F(reverseRatio), F(idleRpm), F(maxRpm),
         F(maxBrakeForce), F(brakeFront), F(engineBrake), F(drivetrainEff), F(fuelCapacity), F(fuelDensity),
         F(fuelPerJoule), F(wearPerJoule), F(tireHeatCap), F(tireSlideHeat), F(tireLonHeat), F(tireRollHeat),
-        F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
+        F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(brakeHeatCap), F(brakeCoolBase), F(brakeCoolSpeed),
+        F(brakeToRim), F(rimHeatCap), F(rimCoolBase), F(rimCoolSpeed), F(rimToTyre), F(brakeTempLo), F(brakeTempHi), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
         F(pitServiceScale),
     };
 #undef F
@@ -76,6 +77,13 @@ float tempWear(int compound, float t) {
     const Compound& k = compoundInfo(compound);
     if (t > k.tempHi) return 1.0f + 0.06f * (t - k.tempHi);
     if (t < k.tempLo) return 1.0f + 0.015f * (k.tempLo - t);
+    return 1.0f;
+}
+
+// Cold carbon brakes bite poorly; past the window they fade.
+float brakeGrip(const CarParams& p, float t) {
+    if (t < p.brakeTempLo) return 0.75f + 0.25f * clampf((t - 50.0f) / (p.brakeTempLo - 50.0f), 0, 1);
+    if (t > p.brakeTempHi) return std::max(0.6f, 1.0f - 0.002f * (t - p.brakeTempHi));
     return 1.0f;
 }
 
@@ -261,13 +269,15 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
 
     // Per wheel: friction (load sensitive), lateral force from the slip angle,
     // then the longitudinal demand, all inside that wheel's friction circle.
-    const float axleGripK[2] = {p.frontGrip * axleGrip(c, 0), p.rearGrip * axleGrip(c, 1)};
+    // (each tyre's own temperature: the axle's compound and wear, then per wheel)
+    const float axleGripK[2] = {p.frontGrip * compoundGrip(c.compound) * wornGrip(c.tireWear[0]),
+                                p.rearGrip * compoundGrip(c.compound) * wornGrip(c.tireWear[1])};
     const float stiff[2] = {p.frontStiffness, 1.0f};
     float muW[4], fyW[4], fxW[4];
     for (int w = 0; w < 4; ++w) {
         const int ax = w / 2;
         const float fz0 = 0.5f * fzRef[ax];
-        muW[w] = mu * axleGripK[ax] * std::max(0.6f, 1.0f - p.muLoadDrop * (fz[w] / fz0 - 1.0f));
+        muW[w] = mu * axleGripK[ax] * tempGrip(c.compound, c.wheelTemp[w]) * std::max(0.6f, 1.0f - p.muLoadDrop * (fz[w] / fz0 - 1.0f));
         fyW[w] = tyreLateral(p, stiff[ax], alpha[ax], fz[w], fz0, muW[w]);
     }
 
@@ -275,8 +285,12 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float rampF = clampf(wfLong / 0.5f, -1, 1);
     const float rampR = clampf(c.vx / 0.5f, -1, 1);
     const float fBrake = brake * p.maxBrakeForce;
-    for (int w = 0; w < 2; ++w) fxW[w] = -0.5f * fBrake * p.brakeFront * rampF - p.rollingResist * fz[w] * rampF;
-    for (int w = 2; w < 4; ++w) fxW[w] = -0.5f * fBrake * (1 - p.brakeFront) * rampR - p.rollingResist * fz[w] * rampR;
+    float brakeW[4];  // each disc's brake force, N (signed with the wheel's travel)
+    for (int w = 0; w < 4; ++w) {
+        const float share = w < 2 ? p.brakeFront : 1 - p.brakeFront;
+        brakeW[w] = 0.5f * fBrake * share * brakeGrip(p, c.brakeTemp[w]) * (w < 2 ? rampF : rampR);
+        fxW[w] = -brakeW[w] - p.rollingResist * fz[w] * (w < 2 ? rampF : rampR);
+    }
     // Drive: half to each rear wheel; what a spinning wheel cannot use goes
     // partly to the other one through the limited-slip differential.
     {
@@ -334,12 +348,29 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
 
         // Temperature: sliding and rolling heat in, airflow out.
         const float work[2] = {latF + p.tireLonHeat * lonF, latR + p.tireLonHeat * lonR};
-        const float cool = p.tireCoolBase + p.tireCoolSpeed * v;
-        for (int ax = 0; ax < 2; ++ax) {
-            const float roll = p.tireRollHeat * (fz[2 * ax] + fz[2 * ax + 1]) * v;
-            const float heat = p.tireSlideHeat * work[ax] + roll - cool * (c.tireTemp[ax] - rates.ambient);
-            c.tireTemp[ax] += heat / p.tireHeatCap * dt;
+        // Per tyre: the axle's slide work shared by each tyre's force, rolling
+        // heat by its load, the rim's heat in, airflow out. Each brake disc
+        // takes its braking power and passes some on to the rim.
+        const float latW[2] = {latF, latR}, lonW[2] = {p.tireLonHeat * lonF, p.tireLonHeat * lonR};
+        const float wheelV[2] = {std::fabs(wfLong), v};
+        const float amb = rates.ambient;
+        const float cool = 0.5f * (p.tireCoolBase + p.tireCoolSpeed * v);
+        const float discCool = p.brakeCoolBase + p.brakeCoolSpeed * v, rimCool = p.rimCoolBase + p.rimCoolSpeed * v;
+        for (int w = 0; w < 4; ++w) {
+            const int ax = w / 2, o = w ^ 1;
+            const float fyS = std::fabs(fyW[w]) / std::max(1.0f, std::fabs(fyW[w]) + std::fabs(fyW[o]));
+            const float fxS = std::fabs(fxW[w]) / std::max(1.0f, std::fabs(fxW[w]) + std::fabs(fxW[o]));
+            const float slide = (fyS * latW[ax] + fxS * lonW[ax]) * (work[ax] > 0 ? 1.0f : 0.0f);
+            float& t = c.wheelTemp[w];
+            float& rim = c.rimTemp[w];
+            float& disc = c.brakeTemp[w];
+            const float toTyre = p.rimToTyre * (rim - t), toRim = p.brakeToRim * (disc - rim);
+            const float braking = std::min(std::fabs(brakeW[w]), std::fabs(fxW[w])) * wheelV[ax];
+            t += (p.tireSlideHeat * slide + p.tireRollHeat * fz[w] * v + toTyre - cool * (t - amb)) / (0.5f * p.tireHeatCap) * dt;
+            rim += (toRim - toTyre - rimCool * (rim - amb)) / p.rimHeatCap * dt;
+            disc += (braking - toRim - discCool * (disc - amb)) / p.brakeHeatCap * dt;
         }
+        for (int ax = 0; ax < 2; ++ax) c.tireTemp[ax] = 0.5f * (c.wheelTemp[2 * ax] + c.wheelTemp[2 * ax + 1]);
     }
 
     // --- body forces ---

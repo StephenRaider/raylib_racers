@@ -71,6 +71,17 @@ struct CarParams {
     float tireCoolBase = 60.0f;      // W/K per axle, standing still
     float tireCoolSpeed = 2.2f;      // extra W/K per m/s
     float blanketTemp = 80.0f;       // C: tyres come off the warmers at this temperature
+    // Brakes: the discs take the braking energy and lose it to the cooling
+    // ducts, and some of it soaks through the wheel rim into the tyre, slowly
+    // (the rim is a big heat store, so it lags the brakes by a minute or more).
+    float brakeHeatCap = 900.0f;     // J/K per disc (carbon, about 1 kg)
+    float brakeCoolBase = 5.0f;      // W/K per disc, standing still
+    float brakeCoolSpeed = 1.0f;     // extra W/K per m/s (the ducts)
+    float brakeToRim = 25.0f;        // W/K, disc to rim
+    float rimHeatCap = 8000.0f;      // J/K per wheel rim
+    float rimCoolBase = 3.0f, rimCoolSpeed = 0.3f;  // W/K, and extra per m/s
+    float rimToTyre = 40.0f;         // W/K, rim to tyre
+    float brakeTempLo = 350.0f, brakeTempHi = 1000.0f;  // C: carbon brakes bite fully inside this window
     // Damage, growing linearly up to damageForMaxLoss: broken wings and floor
     // cost downforce and add drag, a hurt engine loses power, bent suspension
     // loses mechanical grip.
@@ -109,7 +120,10 @@ struct CarState {
     float damage = 0;
     float fuel = 58;
     float tireWear[2] = {0, 0};  // front, rear
-    float tireTemp[2] = {80, 80};  // C, front, rear
+    float tireTemp[2] = {80, 80};  // C, front, rear: the mean of the axle's two tyres
+    float wheelTemp[4] = {80, 80, 80, 80};      // C, each tyre: front left, front right, rear left, rear right
+    float brakeTemp[4] = {300, 300, 300, 300};  // C, each disc
+    float rimTemp[4] = {70, 70, 70, 70};        // C, each wheel rim
     int compound = RR_TIRE_MEDIUM;
 
     Vec2 velWorld() const { return rotate({vx, vy}, yaw); }
@@ -141,7 +155,8 @@ float compoundGrip(int compound);  // grip multiplier of a new tyre
 float compoundWear(int compound);  // wear-rate multiplier
 float wornGrip(float wear);        // grip multiplier from wear (1 when new, cliff past 0.7)
 float tempGrip(int compound, float temp);  // grip multiplier from temperature (1 inside the window)
-float tempWear(int compound, float temp);  // wear multiplier from temperature (1 inside the window)
+float tempWear(int compound, float temp);
+float brakeGrip(const CarParams& p, float temp);  // brake force multiplier from disc temperature (1 inside the window)  // wear multiplier from temperature (1 inside the window)
 float axleGrip(const CarState& c, int axle);  // compound x wear x temperature, 0 front / 1 rear
 float carMass(const CarParams& p, const CarState& c);  // including fuel
 float damageLevel(const CarParams& p, const CarState& c);  // 0 intact .. 1 at damageForMaxLoss
