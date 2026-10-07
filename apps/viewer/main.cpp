@@ -1284,7 +1284,10 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_L)) st.followLeader = !st.followLeader;
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 const int tab = race->isOver() ? hud->resultsTabAt(GetMousePosition()) : -1;
-                const int car = hud->towerCarAt(*race, st, GetMousePosition());
+                // The race-end window covers the timing tower: its rows pick cars, not the tower's.
+                bool onResults = false;
+                const int rowCar = race->isOver() ? hud->resultsCarAt(GetMousePosition(), &onResults) : -1;
+                const int car = onResults ? rowCar : hud->towerCarAt(*race, st, GetMousePosition());
                 if (tab >= 0) st.resultsWindow = tab;
                 else if (car >= 0) pick(car);
             }

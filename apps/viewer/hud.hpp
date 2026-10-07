@@ -89,6 +89,8 @@ public:
     int towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const;
     // Race-end window tab under `p`, -1 if none.
     int resultsTabAt(Vector2 p) const;
+    // The car whose row in the race-end window is at p, or -1; inside sets whether p is on the window.
+    int resultsCarAt(Vector2 p, bool* inside) const;
     // The race setup screen; fills `hits` with its clickable areas.
     void drawMenu(const MenuState& m, std::vector<MenuHit>& hits);
 
@@ -155,6 +157,9 @@ public:
 private:
     void drawResults(const rr::Race& race, const HudState& st);
     std::vector<Rectangle> resultTabs_;  // the race-end window tabs, as last drawn
+    struct RowHit { Rectangle r; int car; };
+    std::vector<RowHit> resultRows_;     // the race-end window's driver rows, as last drawn
+    Rectangle resultsBox_{};             // the race-end window, as last drawn (empty when hidden)
 
     Font regular_{}, bold_{}, mono_{};
     bool ownFonts_ = false;

@@ -607,7 +607,8 @@ void Renderer::buildTrack(const rr::Track& tr) {
     mdlGround_ = modelFrom(ground.build(), texGrass_);
     mdlStart_ = modelFrom(start.build(), texChecker_);
 
-    // Where grass grows: everywhere but the track, its kerbs and the pit lane.
+    // Where grass grows: everywhere but the track, its kerbs and the pit area (the lane and
+    // the aprons in and out of it).
     {
         const int N = 2048;
         const float size = std::max(maxX - minX, maxY - minY) + 600.0f;
@@ -618,7 +619,7 @@ void Renderer::buildTrack(const rr::Track& tr) {
             const auto& a = tr.at(i);
             const auto& b = tr.at(i + 1);
             float la = a.halfWidth + 2.0f, lb = b.halfWidth + 2.0f, ra = la, rb = lb;
-            if (tr.hasPit() && tr.inPitLane(a.s)) {
+            if (tr.hasPit() && tr.inPitArea(a.s)) {
                 float& wa = tr.pit().side > 0 ? la : ra;
                 float& wb = tr.pit().side > 0 ? lb : rb;
                 wa = a.halfWidth + rr::Track::kPitBarrier + 1.0f;
@@ -956,15 +957,20 @@ void Renderer::drawScene(const rr::Race& race, bool shadowPass) {
                 drawModel(mdlCube_, boxTransform(W(c, 0.012f), {6.5f, 0.02f, 3.6f}, yaw), Color{235, 235, 235, 255});
                 drawModel(mdlCube_, boxTransform(W(c, 0.02f), {6.1f, 0.02f, 3.2f}, yaw), Fade(teamColor((int)i), 1.0f));
             }
-        float len = std::fmod(p.lane_end_s - p.lane_start_s + tr.length(), tr.length());
-        float mid = p.lane_start_s + 0.5f * len;
-        const auto& sm = tr.at(tr.indexAt(mid));
-        float yaw = std::atan2(sm.t.y, sm.t.x);
-        float back = sm.halfWidth + rr::Track::kPitBarrier + 0.6f;
-        drawModel(mdlCube_, boxTransform(W(tr.pointAt(mid, p.side * (back + 4.5f)), 2.5f), {len - 20, 5.0f, 9.0f}, yaw),
-                  Color{200, 202, 208, 255});
-        drawModel(mdlCube_, boxTransform(W(tr.pointAt(mid, p.side * (back + 4.5f)), 5.2f), {len - 16, 0.4f, 10.0f}, yaw),
-                  Color{40, 85, 175, 255});
+        // The garage block follows the lane in short sections, so a curved pit lane
+        // doesn't have a straight building cutting across its boxes.
+        const float len = std::fmod(p.lane_end_s - p.lane_start_s + tr.length(), tr.length());
+        const int parts = std::max(1, (int)std::ceil((len - 16) / 12.0f));
+        const float part = (len - 16) / parts;
+        for (int k = 0; k < parts; ++k) {
+            const float s = p.lane_start_s + 8 + part * (k + 0.5f);
+            const auto& sm = tr.at(tr.indexAt(s));
+            const float yaw = std::atan2(sm.t.y, sm.t.x);
+            const float back = sm.halfWidth + rr::Track::kPitBarrier + 0.6f;
+            const Vec2 c = tr.pointAt(s, p.side * (back + 4.5f));
+            drawModel(mdlCube_, boxTransform(W(c, 2.5f), {part + 0.4f, 5.0f, 9.0f}, yaw), Color{200, 202, 208, 255});
+            drawModel(mdlCube_, boxTransform(W(c, 5.2f), {part + 0.6f, 0.4f, 10.0f}, yaw), Color{40, 85, 175, 255});
+        }
     }
 
     for (size_t i = 0; i < race.cars().size(); ++i) drawCar(race.cars()[i], (int)i);
