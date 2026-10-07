@@ -140,4 +140,39 @@ static inline void rr_grip_guard(const RRSensors* in, RRControl* out, float* tc,
     }
 }
 
+/* --------------------------------------------------------------- brakes and tyres */
+
+/* How much of its usual stopping power the car has now (about 0.6 to 1):
+ * cold discs bite less and overheated ones fade (brake_temp, ABI 7), and
+ * tyres out of their window or cooking grip less (axle_grip against
+ * tire_grip). Multiply a planned deceleration by it. 1 on older hosts. */
+static inline float rr_stopping_factor(const RRSensors* in) {
+    float f = 1.0f;
+    if (in->brake_temp_window[1] > 0) {
+        const float lo = in->brake_temp_window[0], hi = in->brake_temp_window[1];
+        float cold = 1e9f, hot = -1e9f, b = 1.0f;
+        int w;
+        for (w = 0; w < 4; ++w) {
+            if (in->brake_temp[w] < cold) cold = in->brake_temp[w];
+            if (in->brake_temp[w] > hot) hot = in->brake_temp[w];
+        }
+        if (cold < lo) {
+            float u = (cold - 50.0f) / (lo - 50.0f);
+            b = 0.75f + 0.25f * (u < 0 ? 0 : u > 1 ? 1 : u);
+        }
+        if (hot > hi) {
+            float fade = 1.0f - 0.002f * (hot - hi);
+            if (fade < 0.6f) fade = 0.6f;
+            if (fade < b) b = fade;
+        }
+        /* the tyres usually limit braking before the discs do: count half */
+        f *= 0.5f + 0.5f * b;
+    }
+    if (in->tire_temp_window[1] > 0 && in->tire_grip > 0.3f) {
+        float g = (in->axle_grip[0] < in->axle_grip[1] ? in->axle_grip[0] : in->axle_grip[1]) / in->tire_grip;
+        f *= g < 0.8f ? 0.8f : g > 1.0f ? 1.0f : g;
+    }
+    return f;
+}
+
 #endif

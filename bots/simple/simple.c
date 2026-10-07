@@ -62,7 +62,7 @@ static void drive(void* self, const RRSensors* in, RRControl* out) {
         target = 12.0f; /* off the tarmac: crawl back */
     } else {
         float d = front - 15.0f;
-        target = 14.0f + sqrtf(2.0f * 6.0f * (d > 0 ? d : 0));
+        target = 14.0f + sqrtf(2.0f * 6.0f * rr_stopping_factor(in) * (d > 0 ? d : 0));
     }
     target *= s->speed_scale * blue;
     {
