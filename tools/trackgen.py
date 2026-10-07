@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Builds tracks/*.trk from corner lists.
+"""Builds tracks/*.trk from traced circuit maps or corner lists.
 
-Each layout is a closed polygon of corners in race order (clockwise, y up):
+A traced layout ("ref") reads tools/track_refs/<ref>.json, made by tools/tracetrack.py
+from a circuit map image. A corner-list layout ("verts") is a closed polygon of corners
+in race order (clockwise, y up):
     (x, y, radius, width)   # comment naming the real corner it is inspired by
 Every corner is rounded with an arc of that radius, joined by straights, then the
 whole lap is scaled to the target length. `start` is a point on the main straight.
@@ -15,62 +17,55 @@ import sys
 
 # Inspired by the real circuits (their signature corners and straights), not copies.
 TRACKS = {
+    # Traced from F1 circuit maps (tools/tracetrack.py -> tools/track_refs/<key>.json),
+    # then stretched and resized so they share the shape but are not copies.
+    # labels: (x, y) pixel in the source map, corner name, track width there (m).
     "monza": dict(
-    name="Autodromo Monzetta", length=5700, width=14, pitspeed=22,
-    about="Temple of speed: long straights broken by chicanes, Curva Grande, the Lesmos, Ascari and the Parabolica.",
-    start=(0,0), runoff=9, verts=[
-        (0,1100,15,15),(40,1112,15,13),            # Rettifilo
-        (150,1800,420,14),                         # Curva Grande
-        (820,1440,20,13),(870,1450,20,13),         # Roggia
-        (1180,1430,55,13),                         # Lesmo 1
-        (1190,1200,50,13),                         # Lesmo 2
-        (1000,560,800,13),                         # Serraglio
-        (920,170,60,13),(925,40,50,13),(840,-40,60,13),  # Ascari
-        (500,-860,110,15),(0,-1060,250,15),        # Parabolica
-    ], names=['Rettifilo', '', 'Curva Grande', 'Roggia', '', 'Lesmo 1', 'Lesmo 2', 'Serraglio', 'Ascari', '', '', 'Parabolica', '']),
+        name="Autodromo Monzetta", length=5700, stretch=(1.0, 1.12), width=14, runoff=9, pitspeed=22,
+        about="Temple of speed: long straights broken by chicanes, Curva Grande, the Lesmos, Ascari and the Parabolica.",
+        ref="monza", start_width=15, labels=[
+            (767, 882, "Rettifilo", 13), (424, 843, "Curva Grande", 14), (358, 371, "Roggia", 12),
+            (160, 116, "Lesmo 1", 13), (424, 32, "Lesmo 2", 13), (876, 654, "Ascari", 13),
+            (1758, 664, "Parabolica", 15)]),
     "spa": dict(
-    name="Ardennes Ring", length=6900, width=13, pitspeed=22,
-    about="Long and fast: La Source hairpin, the Eau Rouge-Raidillon kink, Kemmel straight, Pouhon and Blanchimont.",
-    start=(0,-300), runoff=9, verts=[
-        (0,0,20,15),(80,0,20,15),                  # La Source
-        (90,-420,70,13),(170,-480,80,13),(260,-490,200,13),  # Eau Rouge, Raidillon
-        (1250,-1250,35,13),(1280,-1320,35,13),     # Les Combes
-        (1380,-1500,60,12),                        # Malmedy
-        (1220,-1790,22,13),(1170,-1750,22,13),     # Rivage
-        (980,-1640,80,12),(780,-1920,110,13),      # Pouhon
-        (560,-1960,50,12),(490,-2020,60,12),       # Fagnes
-        (260,-2030,70,13),                         # Stavelot
-        (-80,-1500,300,12),(-100,-900,500,12),     # Blanchimont
-        (-60,-620,18,13),(0,-605,18,13),           # Bus Stop
-    ], names=['La Source', '', 'Eau Rouge', 'Raidillon', '', 'Les Combes', '', 'Malmedy', 'Rivage', '', 'Pouhon', '', 'Fagnes', '', 'Stavelot', 'Blanchimont', '', 'Bus Stop', '']),
+        name="Ardennes Ring", length=6900, stretch=(0.95, 1.08), width=13, runoff=9, pitspeed=22,
+        about="Long and fast: La Source hairpin, the Eau Rouge-Raidillon kink, Kemmel straight, Pouhon and Blanchimont.",
+        ref="spa", start_width=14, start_shift=70, labels=[
+            (279, 1026, "La Source", 15), (595, 607, "Eau Rouge", 13), (552, 488, "Raidillon", 12),
+            (1420, 35, "Les Combes", 13), (1588, 48, "Malmedy", 12), (1770, 356, "Rivage", 13),
+            (1290, 405, "Pouhon", 13), (1539, 675, "Fagnes", 12), (1680, 1053, "Stavelot", 13),
+            (1055, 685, "Blanchimont", 12), (649, 820, "Bus Stop", 14)]),
     "silverstone": dict(
-    name="Silverfield", length=5800, width=15, pitspeed=22,
-    about="Fast and flowing: Abbey, the Loop, Luffield, Copse and the Maggotts-Becketts-Chapel esses into Hangar straight.",
-    start=(0,60), runoff=10, verts=[
-        (0,420,160,15),(180,620,250,15),           # Abbey, Farm
-        (330,700,45,15),(440,640,25,15),           # Village, Loop
-        (410,820,60,15),                           # Aintree
-        (430,1300,50,15),(250,1360,45,16),(260,1500,60,16),  # Brooklands, Luffield
-        (1100,1470,110,16),                        # Copse
-        (1180,1330,150,15),(1300,1260,60,15),(1310,1140,60,15),(1430,1030,60,15),  # Maggotts-Becketts-Chapel
-        (820,220,90,16),                           # Stowe
-        (470,120,30,15),(330,60,45,15),            # Vale, Club
-        (0,-400,70,15),
-    ], names=['Abbey', 'Farm', 'Village', 'Loop', 'Aintree', 'Brooklands, Luffield', '', '', 'Copse', 'Maggotts-Becketts-Chapel', '', '', '', 'Stowe', 'Vale', 'Club', '']),
+        name="Silverfield", length=5800, stretch=(1.06, 0.95), width=15, runoff=10, pitspeed=22,
+        about="Fast and flowing: Abbey, the Loop, Luffield, Copse and the Maggotts-Becketts-Chapel esses into Hangar straight.",
+        ref="silverstone", start_width=16, start_shift=40, labels=[
+            (969, 321, "Abbey", 15), (1011, 665, "Village", 15), (909, 740, "The Loop", 16),
+            (1431, 325, "Brooklands", 15), (1308, 199, "Luffield", 16), (1681, 742, "Copse", 16),
+            (1202, 812, "Maggotts", 15), (1140, 933, "Becketts", 14), (903, 950, "Chapel", 15),
+            (180, 460, "Stowe", 16), (444, 188, "Vale", 14), (416, 129, "Club", 15)]),
     "hungaroring": dict(
-    name="Magyar Park", length=4380, width=12, pitspeed=22,
-    about="Tight and twisty, hard to pass on: a long run to the turn 1 hairpin, then corner after corner.",
-    start=(0,200), runoff=8, verts=[
-        (0,640,30,14),(70,640,30,14),              # T1
-        (150,380,45,12),(240,350,55,12),           # T2, T3
-        (330,-40,80,12),                           # T4
-        (650,-60,40,12),                           # T5
-        (690,-250,20,11),(650,-300,20,11),         # T6-T7
-        (610,-420,50,11),(520,-480,40,11),         # T8, T9
-        (500,-570,60,12),(420,-680,90,12),         # T10, T11
-        (200,-720,40,12),(110,-600,35,12),         # T12, T13
-        (0,-420,60,13),                            # T14
-    ], names=['T1', '', 'T2', 'T3', 'T4', 'T5', 'T6-T7', '', 'T8', 'T9', 'T10', 'T11', 'T12', 'T13', 'T14']),
+        name="Magyar Park", length=4380, stretch=(0.94, 1.06), width=12, runoff=8, pitspeed=22,
+        about="Tight and twisty, hard to pass on: a long run to the turn 1 hairpin, then corner after corner.",
+        ref="hungaroring", start_width=14, labels=[
+            (613, 26, "T1", 14), (782, 463, "T2", 12), (850, 343, "T3", 12), (1515, 88, "T4-T5", 12),
+            (1562, 445, "T6", 11), (1344, 563, "T8", 11), (1479, 691, "T9", 11), (1236, 782, "T10", 12),
+            (1212, 998, "T11", 12), (836, 911, "T12", 12), (771, 663, "T13", 12), (668, 970, "T14", 13)]),
+    "zandvoort": dict(
+        name="Dunes of Zandhoek", length=4260, stretch=(1.08, 1.0), width=11, runoff=7, pitspeed=20,
+        about="Narrow and compact among the dunes: the Tarzan hairpin, Hugenholtz, Scheivlak and the long banked final right.",
+        ref="zandvoort", start_width=12, labels=[
+            (1106, 1053, "Tarzan", 13), (1137, 651, "Gerlach", 11), (1253, 578, "Hugenholtz", 12),
+            (826, 597, "Hunserug", 11), (655, 678, "Slotemaker", 11), (307, 553, "Scheivlak", 11),
+            (487, 203, "Mastersbocht", 11), (460, 480, "Bocht 10", 11), (1138, 373, "Hans Ernst", 11),
+            (1173, 47, "Kumho", 12), (1515, 154, "Arie Luyendyk", 12)]),
+    "sepang": dict(
+        name="Kuala Speedway", length=5500, stretch=(1.0, 1.1), width=17, runoff=10, pitspeed=22,
+        about="Wide and fast: the turn 1-2 hairpin complex, sweeping esses, and two long straights joined by a hairpin.",
+        ref="sepang", start_width=18, labels=[
+            (1777, 2200, "T1", 18), (2060, 1939, "T2", 16), (2030, 1210, "T3", 16), (3602, 748, "T4", 16),
+            (4158, 1482, "T5-T6", 16), (5776, 2158, "T7", 16), (5609, 2601, "T8", 16),
+            (3829, 2740, "T9", 16), (4489, 3050, "T10-T11", 16), (3217, 3168, "T12", 16),
+            (2105, 2861, "T14", 17), (5141, 2174, "T15", 18)]),
     "brands": dict(
     name="Brands Lane", length=3900, width=11, pitspeed=20,
     about="Old-school and narrow: Paddock Hill Bend, the Druids hairpin, a blast through the woods to Hawthorn and back via Clearways.",
@@ -87,36 +82,7 @@ TRACKS = {
         (-200,-450,50,11),                         # Clearways
         (-140,0,120,12),                           # Clark
     ], names=['Paddock Hill', 'Druids', '', 'Graham Hill', 'Surtees', "Pilgrim's Drop", 'Hawthorn', 'Westfield', 'Dingle Dell', 'Sheene', 'Stirlings', 'Clearways', 'Clark']),
-    "zandvoort": dict(
-    name="Dunes of Zandhoek", length=4260, width=11, pitspeed=20,
-    about="Narrow and compact among the dunes: the Tarzan hairpin, Hugenholtz, Scheivlak and the long banked final right.",
-    start=(150,0), runoff=7, verts=[
-        (480,0,30,13),(480,-70,30,13),             # Tarzan
-        (320,-90,90,11),                           # Gerlach
-        (200,-170,25,12),(240,-240,25,12),         # Hugenholtz
-        (450,-340,60,11),(600,-380,80,11),         # Hunserug, Slotemaker
-        (760,-560,90,11),                          # Scheivlak
-        (700,-800,40,11),                          # Mastersbocht
-        (560,-820,50,11),(480,-780,40,11),         # T9-T10
-        (250,-760,60,11),                          # T11
-        (120,-700,25,11),(80,-660,25,11),          # Hans Ernst
-        (-120,-560,90,12),(-140,0,150,12),         # Arie Luyendyk
-    ], names=['Tarzan', '', 'Gerlach', 'Hugenholtz', '', 'Hunserug', 'Slotemaker', 'Scheivlak', 'Mastersbocht', 'T9-T10', '', 'T11', 'Hans Ernst', '', 'Arie Luyendyk', '']),
-    "sepang": dict(
-    name="Kuala Speedway", length=5500, width=17, pitspeed=22,
-    about="Wide and fast: the turn 1 hairpin complex, sweeping esses, and two long straights joined by a hairpin.",
-    start=(200,0), runoff=10, verts=[
-        (950,-120,28,18),(960,-190,28,18),         # T1
-        (880,-260,45,17),                          # T2
-        (900,-620,140,16),                         # T3
-        (600,-700,35,16),                          # T4
-        (420,-640,120,16),(250,-720,120,16),       # T5-T6
-        (-150,-700,90,16),(-260,-400,90,16),       # T7-T8
-        (-280,300,25,16),                          # T9
-        (100,420,90,16),(350,520,70,16),(600,480,120,16),  # T10-T13
-        (1000,330,35,17),(1000,260,35,17),         # T14
-        (-40,60,25,18),(-40,0,25,18),              # T15
-    ], names=['T1', '', 'T2', 'T3', 'T4', 'T5-T6', '', 'T7-T8', '', 'T9', 'T10-T13', '', '', 'T14', '', 'T15', '']),
+
 }
 
 
@@ -180,14 +146,95 @@ def overlaps(pts, margin):
     return bad
 
 
+def traced(key, t, step=5.0):
+    """Points (x, y, width, in_corner) from a traced map, plus (index, name) corner labels."""
+    import json
+    ref = json.load(open(f"tools/track_refs/{t['ref']}.json"))
+    sx, sy = t.get("stretch", (1.0, 1.0))
+    raw = [(x * sx, y * sy) for x, y in ref["points"]]
+    pix = ref["pixels"]
+    # resample evenly and scale to the target length
+    seg = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(raw, raw[1:] + raw[:1])]
+    k = t["length"] / sum(seg)
+    raw = [(x * k, y * k) for x, y in raw]
+    cum = [0.0]
+    for d in seg[:-1]:
+        cum.append(cum[-1] + d * k)
+    n = int(t["length"] / step)
+    out, src = [], []
+    j = 0
+    for i in range(n):
+        sv = i * t["length"] / n
+        while j + 1 < len(cum) and cum[j + 1] <= sv:
+            j += 1
+        a, b = raw[j], raw[(j + 1) % len(raw)]
+        f = (sv - cum[j]) / (seg[j] * k)
+        out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+        src.append(j)
+    # smooth out tracing noise (a few metres of wobble reads as curvature to the drivers)
+    for _ in range(t.get("smooth", 40)):
+        out = [(0.25 * out[i - 1][0] + 0.5 * out[i][0] + 0.25 * out[(i + 1) % n][0],
+                0.25 * out[i - 1][1] + 0.5 * out[i][1] + 0.25 * out[(i + 1) % n][1]) for i in range(n)]
+    # open up corners tighter than min_radius (tracing sharpens hairpins) with local smoothing
+    rmin = t.get("min_radius", 16.0)
+    for _ in range(400):
+        tight = set()
+        for i in range(n):
+            a, b, c = out[i - 2], out[i], out[(i + 2) % n]
+            ab, bc, ca = math.dist(a, b), math.dist(b, c), math.dist(c, a)
+            area = abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2
+            if area > 1e-9 and ab * bc * ca / (4 * area) < rmin:
+                tight.update((i - 2) % n + q for q in range(5))
+        if not tight:
+            break
+        for i in tight:
+            i %= n
+            a, b, c = out[i - 1], out[i], out[(i + 1) % n]
+            out[i] = (b[0] * 0.5 + (a[0] + c[0]) * 0.25, b[1] * 0.5 + (a[1] + c[1]) * 0.25)
+    k = t["length"] / sum(math.dist(a, b) for a, b in zip(out, out[1:] + out[:1]))
+    out = [(x * k, y * k) for x, y in out]
+    # corner labels at the trace point nearest each map label; widths blend between them
+    labels = []
+    for lx, ly, name, w in t["labels"]:
+        jj = min(range(len(pix)), key=lambda q: (pix[q][0] - lx) ** 2 + (pix[q][1] - ly) ** 2)
+        idx = min(range(n), key=lambda q: abs(src[q] - jj))
+        labels.append((idx, name, w))
+    knots = sorted([(0, t["start_width"])] + [(i, w) for i, _, w in labels]) + [(n, t["start_width"])]
+    def width(i):
+        for (i0, w0), (i1, w1) in zip(knots, knots[1:]):
+            if i0 <= i <= i1:
+                f = (i - i0) / max(1, i1 - i0)
+                return round(w0 + (w1 - w0) * (3 * f * f - 2 * f ** 3), 1)
+        return t["width"]
+    pts = []
+    for i, (x, y) in enumerate(out):
+        # in a corner when the point sits off the chord of the 80 m around it
+        p0, p2 = out[i - 8], out[(i + 8) % n]
+        cx, cy = p2[0] - p0[0], p2[1] - p0[1]
+        off = abs(cx * (y - p0[1]) - cy * (x - p0[0])) / (math.hypot(cx, cy) or 1)
+        pts.append((x, y, width(i), off > 4.0))
+    # move the start line along the lap (metres) when the map's line leaves too little grid room
+    sh = int(round(t.get("start_shift", 0) / step))
+    pts = pts[sh:] + pts[:sh]
+    x0, y0 = pts[0][0], pts[0][1]
+    pts = [(x - x0, y - y0, w, c) for x, y, w, c in pts]
+    return pts, [((i - sh) % n, name) for i, name, _ in labels]
+
+
 def build(key, t):
-    pts = path(t["verts"], t["start"])
-    k = t["length"] / arc_s(pts)[1]
-    verts = [(x * k, y * k, r * k, w) for x, y, r, w in t["verts"]]
-    pts = path(verts, (t["start"][0] * k, t["start"][1] * k))
+    if "ref" in t:
+        pts, labels = traced(key, t)
+    else:
+        pts = path(t["verts"], t["start"])
+        k = t["length"] / arc_s(pts)[1]
+        verts = [(x * k, y * k, r * k, w) for x, y, r, w in t["verts"]]
+        pts = path(verts, (t["start"][0] * k, t["start"][1] * k))
+        labels = [(min(range(len(pts)), key=lambda q: (pts[q][0] - v[0]) ** 2 + (pts[q][1] - v[1]) ** 2), name)
+                  for v, name in zip(verts, t["names"]) if name]
     bad = overlaps(pts, 2 * t["runoff"] + 4)
-    assert not bad, f"{key}: track runs into itself at {bad[:3]}"
-    return pts
+    if bad:
+        print(f"  warning: {key} comes close to itself at s = {bad[:3]}")
+    return pts, labels
 
 
 def write(key, t, pts):
@@ -212,7 +259,7 @@ def write(key, t, pts):
     acc = 24.0
     for a, b in zip([pts[-1]] + pts, pts):
         acc += math.hypot(b[0] - a[0], b[1] - a[1])
-        if acc >= (12 if b[3] else 24):  # denser control points in corners
+        if acc >= (9.5 if b[3] else 24):  # denser control points in corners
             lines.append(f"p {b[0]:.1f} {b[1]:.1f} {b[2]:g}")
             acc = 0.0
     with open(f"tracks/{key}.trk", "w") as f:
@@ -220,7 +267,7 @@ def write(key, t, pts):
     return total, (entry % total, lane_start % total, lane_end, exit_s)
 
 
-def plot(key, t, pts, pit, outdir):
+def plot(key, t, pts, labels, pit, outdir):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -248,11 +295,8 @@ def plot(key, t, pts, pit, outdir):
     # corner names next to their apex, pushed away from the lap centre
     cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
     span = max(max(xs) - min(xs), max(ys) - min(ys))
-    k = t["length"] / t["_rawlen"]
-    for (x, y, r, w), name in zip(t["verts"], t["names"]):
-        if not name:
-            continue
-        x, y = x * k, y * k
+    for i, name in labels:
+        x, y = pts[i][0], pts[i][1]
         dx, dy = x - cx, y - cy
         d = math.hypot(dx, dy) or 1
         ax.text(x + dx / d * span * 0.05, y + dy / d * span * 0.05, name, color="#8fc8ff", fontsize=7,
@@ -274,12 +318,12 @@ def main():
     keys = [a for a in sys.argv[1:] if a in TRACKS] or list(TRACKS)
     for key in keys:
         t = TRACKS[key]
-        t["_rawlen"] = arc_s(path(t["verts"], t["start"]))[1]
-        pts = build(key, t)
+        pts, labels = build(key, t)
         total, pit = write(key, t, pts)
-        print(f"{key:12s} {total:6.0f} m  pit {pit[0]:.0f}-{pit[3]:.0f}, lane {(pit[2] - pit[1]) % total:.0f} m")
+        print(f"{key:12s} {total:6.0f} m  pit {pit[0]:.0f}-{pit[3]:.0f}, lane {(pit[2] - pit[1]) % total:.0f} m,"
+              f" grid room {total - pit[0] + 20:.0f} m")
         if outdir:
-            plot(key, t, pts, pit, outdir)
+            plot(key, t, pts, labels, pit, outdir)
 
 
 if __name__ == "__main__":
