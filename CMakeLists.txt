@@ -32,7 +32,8 @@ add_library(rr_core STATIC
   src/core/race.cpp
   src/core/robot_loader.cpp
   src/core/config.cpp
-  src/core/spec.cpp)
+  src/core/spec.cpp
+  src/core/testlog.cpp)
 target_include_directories(rr_core PUBLIC include src/core)
 target_compile_options(rr_core PRIVATE ${RR_WARNINGS})
 target_compile_definitions(rr_core PUBLIC RR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -83,6 +84,8 @@ if(RR_BUILD_VIEWER)
     apps/viewer/engine_sound.cpp
     apps/viewer/race_audio.cpp
     apps/viewer/menu.cpp
+    apps/viewer/hud_test.cpp
+    apps/viewer/test_figures.cpp
     apps/viewer/liveries.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
   target_compile_options(rr_viewer PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
@@ -100,6 +103,8 @@ if(RR_BUILD_BOTS)
             --json ${CMAKE_BINARY_DIR}/smoke_results.json)
   add_test(NAME race_oval COMMAND rr_race --track oval --laps 1 --quiet --car racingline)
   # Fast tyre wear forces a stop: the racingline robot must pit and finish.
+  add_test(NAME race_test_log COMMAND rr_race --laps 2 --quiet --car racingline --no-pits --fuel 8 --tires soft
+           --test-log ${CMAKE_BINARY_DIR}/ctest_test_runs)
   add_test(NAME race_pit_stop COMMAND rr_race --laps 6 --wear-rate 6 --quiet --car racingline)
   set_tests_properties(race_pit_stop PROPERTIES PASS_REGULAR_EXPRESSION "racingline +[0-9]+:[0-9.]+ .* [1-9] \\(L[0-9]")
   # After the flag every car drives into the pit lane and parks.

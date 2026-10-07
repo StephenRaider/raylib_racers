@@ -14,6 +14,8 @@ const Color kDim = {160, 166, 180, 255};
 const Color kAccent = {255, 196, 40, 255};
 const Color kBlueFlag = {40, 110, 255, 255};
 
+}  // namespace
+
 std::string lapTime(double t) {
     if (t <= 0) return "-:--.---";
     int m = (int)(t / 60);
@@ -21,6 +23,8 @@ std::string lapTime(double t) {
     std::snprintf(buf, sizeof buf, "%d:%06.3f", m, t - m * 60);
     return buf;
 }
+
+namespace {
 
 Font loadFont(const std::string& path, int size) {
     if (!std::filesystem::exists(path)) return GetFontDefault();
@@ -106,13 +110,13 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
     if (st.showHelp) drawHelp();
 }
 
-static Color compoundColor(int compound) {
+Color compoundColor(int compound) {
     return compound == RR_TIRE_SOFT ? Color{230, 50, 50, 255}
          : compound == RR_TIRE_HARD ? Color{235, 235, 240, 255}
                                     : Color{245, 200, 30, 255};
 }
 
-static const char* compoundName(int compound) {
+const char* compoundName(int compound) {
     return compound == RR_TIRE_SOFT ? "SOFT" : compound == RR_TIRE_HARD ? "HARD" : "MEDIUM";
 }
 
@@ -227,10 +231,10 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
         }
 }
 
-void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
+void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, float atY) {
     const rr::Car& c = race.cars()[st.focus];
     const float w = 380, h = 276;
-    const float x = GetScreenWidth() - w - 16, y = GetScreenHeight() - h - 16;
+    const float x = atX >= 0 ? atX : GetScreenWidth() - w - 16, y = atY >= 0 ? atY : GetScreenHeight() - h - 16;
     panel({x, y, w, h});
     char buf[128];
 
@@ -293,12 +297,13 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st) {
 
     // laps
     float ly = y + 146;
-    std::snprintf(buf, sizeof buf, "LAP %s", lapTime(race.time() - c.lapStart).c_str());
-    if (c.finished) std::snprintf(buf, sizeof buf, "FINISHED %s", lapTime(c.finishTime).c_str());
+    std::snprintf(buf, sizeof buf, "LAP %s", lapTime(st.lapClock >= 0 ? st.lapClock : race.time() - c.lapStart).c_str());
+    if (c.finished && st.lapClock < 0) std::snprintf(buf, sizeof buf, "FINISHED %s", lapTime(c.finishTime).c_str());
     text(buf, x + 16, ly, 15, kText, false, true);
-    std::snprintf(buf, sizeof buf, "LAST %s", lapTime(c.lapTimes.empty() ? 0 : c.lapTimes.back()).c_str());
+    std::snprintf(buf, sizeof buf, "LAST %s",
+                  lapTime(st.lastLap >= 0 ? st.lastLap : c.lapTimes.empty() ? 0 : c.lapTimes.back()).c_str());
     text(buf, x + 196, ly, 15, kDim, false, true);
-    std::snprintf(buf, sizeof buf, "BEST %s", lapTime(c.bestLap).c_str());
+    std::snprintf(buf, sizeof buf, "BEST %s", lapTime(st.bestLap >= 0 ? st.bestLap : c.bestLap).c_str());
     text(buf, x + 196, ly + 20, 15, kAccent, false, true);
     std::snprintf(buf, sizeof buf, "%s", k.status[0] ? k.status : "");
     text(buf, x + 16, ly + 20, 14, kDim);
@@ -432,50 +437,67 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
         drawTeamsPage(m, hits);
         return;
     }
+    if (m.testStatsPage) {
+        drawTestStatsPage(m, hits);
+        return;
+    }
+    if (m.runsPage) {
+        drawRunsPage(m, hits);
+        return;
+    }
+    using Row = MenuState::Row;
+    const std::vector<Row> rows = m.rows();
     const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(Color{8, 10, 16, 255}, 0.35f));
-    const float w = 720, rowH = 60, h = 130 + MenuState::kRows * rowH + 50;
-    const float x = (sw - w) / 2, y = std::max(20.0f, (sh - h) / 2);
+    const float rowH = rows.size() > 10 ? 56.0f : 60.0f;
+    const float w = 760, h = 130 + rows.size() * rowH + 50;
+    const float x = (sw - w) / 2, y = std::max(10.0f, (sh - h) / 2);
     panel({x, y, w, h}, 0.88f);
     text("RAYLIB RACERS", x + 32, y + 26, 20, kAccent, true);
-    text("Race setup", x + 32, y + 52, 36, kText, true);
+    text(m.testing() ? "Testing setup" : "Race setup", x + 32, y + 52, 36, kText, true);
 
     const TrackStats& ts = m.stats();
-    char val[96], note[160];
+    const auto& table = liveryTable();
+    char val[96], note[200];
     float ry = y + 104;
-    for (int row = 0; row < MenuState::kRows; ++row, ry += rowH) {
+    for (int row = 0; row < (int)rows.size(); ++row, ry += rowH) {
+        const Row kind = rows[row];
         const bool sel = row == m.row;
         const Rectangle r = {x + 20, ry, w - 40, rowH - 8};
         hits.push_back({r.x, r.y, r.width, r.height, row, 0});
-        if (row == MenuState::kStartRow) {
+        if (kind == Row::Start) {
             Rectangle b = {x + 20, ry + 6, w - 40, rowH - 4};
             hits.back() = {b.x, b.y, b.width, b.height, row, 0};
             DrawRectangleRounded(b, 0.25f, 8, sel ? kAccent : Fade(kAccent, 0.75f));
-            const char* s = "START RACE";
-            text(s, b.x + (b.width - width(s, 26, true)) / 2, b.y + 15, 26, Color{20, 20, 24, 255}, true);
+            const char* s = m.testing() ? "START TEST" : "START RACE";
+            text(s, b.x + (b.width - width(s, 26, true)) / 2, b.y + (b.height - 26) / 2 - 2, 26, Color{20, 20, 24, 255}, true);
             continue;
         }
         if (sel) DrawRectangleRounded(r, 0.2f, 8, Fade(WHITE, 0.08f));
-        static const char* labels[] = {"Track",   "Race length", "Tyre life", "Teams",     "Drivers per team",
-                                       "Session", "Tyre rule",   "Grid",      "Team stats"};
-        const char* label = labels[row];
+        const char* label = "";
         note[0] = 0;
-        switch (row) {
-            case 0:
+        switch (kind) {
+            case Row::Track:
+                label = "Track";
                 std::snprintf(val, sizeof val, "%s", ts.title.c_str());
                 std::snprintf(note, sizeof note, "%.2f km, lap about %d:%02d", ts.length / 1000.0f,
                               (int)ts.lapTime / 60, (int)ts.lapTime % 60);
                 break;
-            case 1: {
+            case Row::Laps: {
+                label = m.testing() ? "Run length" : "Race length";
                 std::snprintf(val, sizeof val, "%d lap%s", m.laps, m.laps == 1 ? "" : "s");
                 int mins = (int)std::lround(m.laps * ts.lapTime / 60.0f);
                 float tank = m.lapsPerTank();
                 int stops = (int)std::ceil(m.laps / tank - 1e-3f) - 1;
-                std::snprintf(note, sizeof note, "about %d min.  Tank lasts %.0f laps: %s", std::max(1, mins), tank,
-                              stops <= 0 ? "no fuel stop" : stops == 1 ? "1 fuel stop" : (std::to_string(stops) + " fuel stops").c_str());
+                if (m.testing())
+                    std::snprintf(note, sizeof note, "about %d min alone on track, no pit stops", std::max(1, mins));
+                else
+                    std::snprintf(note, sizeof note, "about %d min.  Tank lasts %.0f laps: %s", std::max(1, mins), tank,
+                                  stops <= 0 ? "no fuel stop" : stops == 1 ? "1 fuel stop" : (std::to_string(stops) + " fuel stops").c_str());
                 break;
             }
-            case 2: {
+            case Row::TyreLife: {
+                label = "Tyre life";
                 int life = MenuState::kTyreLives[m.tyreLife];
                 if (life == 0) {
                     std::snprintf(val, sizeof val, "no wear");
@@ -489,7 +511,8 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
                 }
                 break;
             }
-            case MenuState::kTeamsRow:
+            case Row::Teams:
+                label = "Teams";
                 if (m.teamSlots.empty()) {
                     std::snprintf(val, sizeof val, "%d cars", m.cars);
                 } else {
@@ -497,43 +520,111 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
                     std::snprintf(note, sizeof note, "%d cars on the grid", m.cars);
                 }
                 break;
-            case MenuState::kDriversRow:
+            case Row::Drivers:
+                label = "Drivers per team";
                 std::snprintf(val, sizeof val, "%d", m.drivers);
                 std::snprintf(note, sizeof note, "%s", m.drivers == 1 ? "one car per team" : "teammates share the team's stats");
                 break;
-            case MenuState::kStatsRow:
+            case Row::Stats:
+                label = "Team stats";
                 std::snprintf(val, sizeof val, "Edit");
                 std::snprintf(note, sizeof note, "%d points per team over %d stats; each driver's style sets its team's",
                               m.statRules.budget, (int)m.statRules.keys.size());
                 break;
-            case MenuState::kSessionRow:
-                std::snprintf(val, sizeof val, "%s", m.weekend ? "Weekend" : "Race only");
-                std::snprintf(note, sizeof note, "%s", m.weekend ? "qualifying sets the grid: each car runs alone, fastest lap wins pole"
-                                                                 : "grid in the order of the Grid page");
+            case Row::Session:
+                label = "Session";
+                std::snprintf(val, sizeof val, "%s", m.testing() ? "Testing" : m.weekend() ? "Weekend" : "Race only");
+                std::snprintf(note, sizeof note, "%s",
+                              m.testing()   ? "one car alone, telemetry graphs, every run saved"
+                              : m.weekend() ? "qualifying sets the grid: each car runs alone, fastest lap wins pole"
+                                            : "grid in the order of the Grid page");
                 break;
-            case MenuState::kRuleRow:
+            case Row::TyreRule:
+                label = "Tyre rule";
                 std::snprintf(val, sizeof val, "%s", m.tyreRule == 0 ? "Auto" : m.tyreRule == 1 ? "Two compounds" : "Free");
                 std::snprintf(note, sizeof note, "%s",
                               m.twoCompoundRule() ? "every car must race two different compounds or get +30 s"
                                                   : m.tyreRule == 0 ? "two compounds required in races over 20 laps"
                                                                     : "any tyres, any number of stops");
                 break;
-            default:
+            case Row::Grid:
+                label = "Grid";
                 std::snprintf(val, sizeof val, "Edit");
                 std::snprintf(note, sizeof note, "choose each car's livery, driving algorithm and starting tyres");
                 break;
+            case Row::TestCar: {
+                label = "Algorithm";
+                const Algorithm* a = m.testAlgo < (int)m.algos.size() ? &m.algos[m.testAlgo] : nullptr;
+                std::snprintf(val, sizeof val, "%s", a ? a->label.c_str() : "?");
+                if (a) std::snprintf(note, sizeof note, "%s%s%s", a->robot.c_str(), a->params.empty() ? "" : "  ", a->params.c_str());
+                break;
+            }
+            case Row::TestLivery: {
+                label = "Car";
+                const int slot = m.testLivery;
+                if (slot < (int)table.size()) {
+                    std::snprintf(val, sizeof val, "#%d", table[slot].number);
+                    std::snprintf(note, sizeof note, "%s livery", table[slot].team.c_str());
+                } else {
+                    std::snprintf(val, sizeof val, "livery %d", slot + 1);
+                }
+                break;
+            }
+            case Row::TestTyres: {
+                label = "Tyres";
+                static const char* names[] = {"Auto", "Soft", "Medium", "Hard"};
+                const int used = m.testTiresUsed();
+                if (m.testTires) std::snprintf(val, sizeof val, "%s", names[m.testTires & 3]);
+                else std::snprintf(val, sizeof val, "Auto: %s", names[used & 3]);
+                if (m.compoundLife[RR_TIRE_MEDIUM] <= 0)
+                    std::snprintf(note, sizeof note, "no tyre wear in this session");
+                else
+                    std::snprintf(note, sizeof note, "soft %.0f, medium %.0f, hard %.0f laps with this car%s",
+                                  m.compoundLife[RR_TIRE_SOFT], m.compoundLife[RR_TIRE_MEDIUM], m.compoundLife[RR_TIRE_HARD],
+                                  m.compoundLife[used] < m.laps ? ": past the cliff before the end" : "");
+                break;
+            }
+            case Row::TestFuel: {
+                label = "Fuel";
+                const float f = m.testFuelUsed();
+                if (m.testFuel > 0) std::snprintf(val, sizeof val, "%.0f L", f);
+                else std::snprintf(val, sizeof val, "Auto: %.1f L", f);
+                const float laps = f / std::max(0.1f, m.fuelPerLapEst);
+                std::snprintf(note, sizeof note, "about %.2f L/lap: enough for %.1f laps%s. %s", m.fuelPerLapEst, laps,
+                              laps < m.laps ? " (runs dry!)" : "", m.testFuel > 0 ? "Backspace: auto" : "the run plus a lap");
+                break;
+            }
+            case Row::TestStats: {
+                label = "Car stats";
+                std::snprintf(val, sizeof val, "Edit");
+                std::string st = m.statRules.format(m.testStats);
+                if (st.empty()) st = "all stock (5)";
+                std::snprintf(note, sizeof note, "%s", st.c_str());
+                break;
+            }
+            case Row::TestRuns:
+                label = "Saved runs";
+                std::snprintf(val, sizeof val, "Open");
+                std::snprintf(note, sizeof note, "%d saved: setups, best laps, telemetry of the last 10 per algorithm",
+                              m.runsTotal);
+                break;
+            default: break;
         }
-        text(label, r.x + 16, r.y + 8, 21, sel ? kText : kDim, true);
-        if (note[0]) text(note, r.x + 16, r.y + 34, 15, kDim);
+        text(label, r.x + 16, r.y + 6, 21, sel ? kText : kDim, true);
+        if (note[0]) {
+            float size = 15;
+            while (size > 11 && width(note, size) > r.width - 300) size -= 1;
+            text(note, r.x + 16, r.y + 32, size, kDim);
+        }
         // value with arrows, right-aligned
         const float vr = r.x + r.width - 16;
         const float vw = std::max(150.0f, width(val, 22, true));
         const float ax = vr - vw - 44;
-        text("<", ax, r.y + 12, 24, sel ? kAccent : kDim, true);
-        text(">", vr - 12, r.y + 12, 24, sel ? kAccent : kDim, true);
+        text("<", ax, r.y + 10, 24, sel ? kAccent : kDim, true);
+        text(">", vr - 12, r.y + 10, 24, sel ? kAccent : kDim, true);
         hits.push_back({ax - 10, r.y, 36, r.height, row, -1});
         hits.push_back({vr - 22, r.y, 36, r.height, row, 1});
-        text(val, ax + 28 + (vw - width(val, 22, true)) / 2, r.y + 13, 22, kText, true);
+        text(val, ax + 28 + (vw - width(val, 22, true)) / 2, r.y + 11, 22, kText, true);
     }
     const char* help = "Up/Down choose    Left/Right change (Shift: bigger steps)    Enter start    Esc quit";
     text(help, x + (w - width(help, 15)) / 2, y + h - 34, 15, kDim);

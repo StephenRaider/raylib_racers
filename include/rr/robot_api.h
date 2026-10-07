@@ -29,9 +29,9 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 5
-/* Robots built for ABI 2 to 4 still load: later versions only appended
- * fields to RRCarSpec, RRSensors and RRControl. */
+#define RR_ABI_VERSION 6
+/* Robots built for ABI 2 to 5 still load: later versions only appended
+ * fields to RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
 #define RR_NUM_TRACK_SENSORS 19
@@ -196,6 +196,10 @@ typedef struct RRRobotConfig {
     float wear_rate;        /* race multiplier on tyre wear (--wear-rate, 1 = normal) */
     float ambient_temp;     /* C */
     int starting_compound_set;  /* 1: the team chose the starting tyres (already in tire_compound) */
+
+    /* --- ABI 6 --- */
+    int pits_closed;        /* 1: no pit stops in this session (testing): plan to run to the flag */
+    int starting_fuel_set;  /* 1: the team chose the starting fuel (already in initial_fuel); changes are ignored */
 } RRRobotConfig;
 
 typedef struct RRSensors {
@@ -281,6 +285,9 @@ typedef struct RRSensors {
     int two_compound_rule;     /* 1: two different compounds must be used, or RR_TWO_COMPOUND_PENALTY */
     int compounds_used;        /* bit (1 << RR_TIRE_*) for each compound we have used */
     int starting_compound_set; /* 1: the team chose our starting tyres; RRRobotConfig.tire_compound is ignored */
+
+    /* --- ABI 6 --- */
+    int pits_closed;           /* 1: pit requests are ignored in this session */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */

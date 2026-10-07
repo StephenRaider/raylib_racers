@@ -139,6 +139,9 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         c.robotCfg.wear_rate = cfg.wearRate;
         c.robotCfg.ambient_temp = cfg.ambient;
         c.robotCfg.starting_compound_set = e.tires != 0;
+        c.robotCfg.pits_closed = cfg.pitsClosed;
+        c.robotCfg.starting_fuel_set = e.fuel > 0;
+        if (e.fuel > 0) c.robotCfg.initial_fuel = std::min(e.fuel, c.phys.fuelCapacity);
         RRCarSpec spec = c.phys.spec();
         c.robot = api->create(&track_.info(), &spec, (int)i, c.params.c_str(), &c.robotCfg);
         if (!c.robot) {
@@ -150,6 +153,7 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         if (c.robotCfg.tire_compound < RR_TIRE_SOFT || c.robotCfg.tire_compound > RR_TIRE_HARD)
             c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
         if (e.tires) c.robotCfg.tire_compound = e.tires;  // the team's call wins
+        if (e.fuel > 0) c.robotCfg.initial_fuel = std::min(e.fuel, c.phys.fuelCapacity);
         c.startTiresSet = e.tires != 0;
     }
     // Make duplicate names unique: "simple", "simple #2", ...
@@ -297,6 +301,7 @@ void Race::computeSensors(Car& c) {
     s.two_compound_rule = twoCompoundRule();
     s.compounds_used = c.compoundsUsed;
     s.starting_compound_set = c.startTiresSet;
+    s.pits_closed = cfg_.pitsClosed;
 
     s.speed_x = st.vx;
     s.speed_y = st.vy;
@@ -658,7 +663,7 @@ void Race::updatePit(Car& c) {
         if (!inLane) { c.pitState = RR_PIT_NONE; break; }
         float boxLat = c.halfWidth + Track::kBoxCentre;
         bool atBox = std::fabs(wrapDs(c.trackS - c.pitBoxS)) < 2.5f && std::fabs(c.lateral * side - boxLat) < 2.0f;
-        if (c.control.pit_request && atBox && speed < 0.5f && !c.finished && !over_) {
+        if (c.control.pit_request && !cfg_.pitsClosed && atBox && speed < 0.5f && !c.finished && !over_) {
             c.pitOrder = c.control;
             float fuel = clampf(c.pitOrder.pit_fuel, 0.0f, c.phys.fuelCapacity - c.state.fuel);
             c.pitOrder.pit_fuel = fuel;

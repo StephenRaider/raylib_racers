@@ -26,6 +26,7 @@ std::string usage(const char* prog, bool viewer) {
         "  --spec NAME|FILE       car spec for the last --car (specs/*.json; default: the built-in F1 car)\n"
         "  --dev STR              team stats (0-10, 40 points) for the last --car, e.g. \"top_speed=8,handling=2\"\n"
         "  --tires soft|medium|hard  starting tyres for the last --car (default: the robot decides)\n"
+        "  --fuel LITRES          starting fuel for the last --car (default: the robot decides)\n"
         "  --dev-rules NAME|FILE  team stat rules (default specs/development.json)\n"
         "  --seed N               random seed (sensor noise)\n"
         "  --noise X              range-finder noise, relative std-dev (default 0)\n"
@@ -36,9 +37,12 @@ std::string usage(const char* prog, bool viewer) {
         "  --wear-rate X          tyre wear multiplier (default 1; raise it to force stops in short races)\n"
         "  --ambient C            air and track temperature (default 25): hotter days overheat the tyres\n"
         "  --two-compounds on|off|auto  every car must use two compounds (auto: races over 20 laps)\n"
+        "  --no-pits              pit requests are ignored (robots are told, ABI 6)\n"
         "Output\n"
         "  --json FILE            write results as JSON\n"
         "  --telemetry DIR        write one CSV per car at the robot rate\n"
+        "  --test-log DIR         record the first car like the viewer's Testing mode and save the run\n"
+        "                         in DIR (runs.json, run_N/summary.json, run_N/telemetry.csv)\n"
         "  --quiet                print only the results\n"
         "  --cool-down            after the flag, run on until the cars have parked in the pit lane\n";
     if (viewer) {
@@ -53,6 +57,10 @@ std::string usage(const char* prog, bool viewer) {
              "  --no-menu             skip the race setup menu\n"
              "  --mute                no engine sound (M toggles it)\n"
              "  --sound-test FILE     render 25 s of engine sound from --at seconds to a WAV, no window\n"
+             "  --test                open the Testing session for the first --car (with --no-menu: start the run)\n"
+             "  --test-view N         testing screen: 0 dashboard, 1 driving, 2 session, 3 track and events\n"
+             "  --scrub SECONDS       testing screen: show that moment of the run (for screenshots)\n"
+             "  --page stats|runs     open a testing setup page (for screenshots)\n"
              "Keys: Tab/Left/Right focus car, L follow leader, C or F2-F8 camera, Space pause, +/- speed, M mute, R restart, Esc menu, H HUD, F1 help\n";
     }
     return u;
@@ -79,6 +87,14 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
                 if (!t) throw std::runtime_error("--tires takes soft, medium or hard");
                 cfg.entries.back().tires = t;
             }
+            else if (a == "--fuel") {
+                const float v = std::stof(need(i, a));
+                if (cfg.entries.empty()) throw std::runtime_error(a + " must follow a --car");
+                if (v <= 0) throw std::runtime_error("--fuel must be positive");
+                cfg.entries.back().fuel = v;
+            }
+            else if (a == "--no-pits") cfg.pitsClosed = true;
+            else if (a == "--test-log") cfg.testLog = need(i, a);
             else if (a == "--two-compounds") {
                 std::string v = need(i, a);
                 cfg.twoCompounds = v == "on" ? 1 : v == "off" ? 0 : v == "auto" ? -1 : -2;
@@ -112,6 +128,10 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (viewer && a == "--no-menu") cfg.noMenu = true;
             else if (viewer && a == "--mute") cfg.mute = true;
             else if (viewer && a == "--sound-test") cfg.soundTest = need(i, a);
+            else if (viewer && a == "--test") cfg.test = true;
+            else if (viewer && a == "--test-view") cfg.testView = std::stoi(need(i, a));
+            else if (viewer && a == "--scrub") cfg.scrubAt = std::stof(need(i, a));
+            else if (viewer && a == "--page") cfg.page = need(i, a);
             else if (viewer && a == "--screenshot") cfg.screenshot = need(i, a);
             else if (viewer && a == "--at") cfg.screenshotAt = std::stof(need(i, a));
             else throw std::runtime_error("unknown option " + a);

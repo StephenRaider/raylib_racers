@@ -17,6 +17,8 @@
 #include "renderer.hpp"
 #include "rlgl.h"
 #include "spec.hpp"
+#include "test_figures.hpp"
+#include "testlog.hpp"
 
 #ifndef RR_SOURCE_DIR
 #define RR_SOURCE_DIR "."
@@ -209,6 +211,7 @@ int main(int argc, char** argv) {
     menu.carTires.resize(menu.maxCars, 0);
 
     // Teams (liveries grouped by team name) and their stats.
+    rr::DevRules devRules;
     {
         std::vector<std::string> names;
         menu.slotTeam.assign(liveryTable().size(), -1);
@@ -225,12 +228,13 @@ int main(int argc, char** argv) {
         std::vector<std::string> specDirs;
         for (const auto& d : paths.tracks) specDirs.push_back((std::filesystem::path(d).parent_path() / "specs").string());
         specDirs.push_back("specs");
-        rr::DevRules rules;
+        rr::DevRules& rules = devRules;
         const std::string rulesPath = rr::findDataFile(cfg.devRules, specDirs);
         if (!rulesPath.empty() && rr::loadDevRules(rulesPath, rules, &err)) {
             for (const auto& c : rules.categories) {
                 menu.statRules.keys.push_back(c.key);
                 menu.statRules.labels.push_back(c.label);
+                menu.statAbout.push_back(c.about);
             }
             menu.statRules.budget = rules.budget;
             menu.statRules.min = rules.minPoints;
@@ -238,6 +242,7 @@ int main(int argc, char** argv) {
             menu.statRules.neutral = rules.neutral;
         }
         menu.teamStats.assign(menu.teamSlots.size(), menu.statRules.parse(""));
+        menu.testStats = menu.statRules.parse(menu.algos.empty() ? "" : menu.algos[0].stats);
     }
     menu.tyreRule = cfg.twoCompounds < 0 ? 0 : cfg.twoCompounds ? 1 : 2;
     menu.cars = cliEntries.empty() ? (int)std::min<size_t>(menu.maxCars, liveryTable().empty() ? 7 : liveryCount)
@@ -353,7 +358,7 @@ int main(int argc, char** argv) {
     int shotFrames = 0;
     std::vector<MenuHit> menuHits;
 
-    if (shotMode && !inMenu)
+    if (shotMode && !inMenu && !cfg.test)
         while (!race->cooledDown() && race->time() < cfg.screenshotAt) race->step();
     // --focus N picks a car; without it the camera follows whoever leads.
     if (cfg.focus >= 0 && cfg.focus < (int)race->cars().size()) {
@@ -383,7 +388,7 @@ int main(int argc, char** argv) {
     if (inMenu) applyMenu();
 
     // ---- weekend: qualifying runs one car at a time, then the race starts in that order
-    enum class Phase { Race, Quali, QualiDone } phase = Phase::Race;
+    enum class Phase { Race, Quali, QualiDone, Test } phase = Phase::Race;
     const rr::Race* loggedRace = nullptr;  // the race whose log has been written
     std::vector<rr::EntrySpec> weekendEntries;
     std::vector<float> qualiTime;
@@ -467,6 +472,274 @@ int main(int argc, char** argv) {
         return true;
     };
 
+    // ---- testing: one car alone, recorded; every run saved under test_runs/
+    rr::TestStore store(dir + "/test_runs");
+    if (!store.load(&err)) std::fprintf(stderr, "warning: %s\n", err.c_str());
+    menu.runsTotal = (int)store.runs().size();
+    rr::TestRecorder rec;
+    rr::TestSetup testSetup;
+    TestView tv;
+    tv.rec = &rec;
+    std::vector<TestHit> testHits;
+    bool testSaved = false, dragging = false;
+    std::vector<int> figuresFor;  // the stats the figures were computed for
+    int figuresTrack = -1;
+    float figuresLife = -1;
+    // The automatic tyres and fuel for the run, and what the stats do.
+    auto refreshTesting = [&]() {
+        const TrackStats& ts = menu.stats();
+        const rr::CarParams p0, p1 = carWithStats(devRules, menu.testStats);
+        menu.fuelPerLapEst = ts.fuelPerLap * cfg.fuelRate * p1.fuelPerJoule / p0.fuelPerJoule;
+        const int life = MenuState::kTyreLives[menu.tyreLife];
+        const float medium = life * p0.wearPerJoule / p1.wearPerJoule;
+        for (int c = RR_TIRE_SOFT; c <= RR_TIRE_HARD; ++c) menu.compoundLife[c] = life == 0 ? 0 : medium / rr::compoundWear(c);
+        menu.autoTires = RR_TIRE_HARD;
+        if (life == 0 || menu.compoundLife[RR_TIRE_SOFT] >= menu.laps) menu.autoTires = RR_TIRE_SOFT;
+        else if (menu.compoundLife[RR_TIRE_MEDIUM] >= menu.laps) menu.autoTires = RR_TIRE_MEDIUM;
+        menu.autoFuel = std::min(menu.tankLitres, std::ceil(menu.fuelPerLapEst * (menu.laps + 1) * 10) / 10);
+        if (menu.testStatsPage && (figuresFor != menu.testStats || figuresTrack != menu.track || figuresLife != (float)life)) {
+            FigureInputs in;
+            in.fuelPerLap = ts.fuelPerLap * cfg.fuelRate;
+            in.tyreLifeLaps = (float)life;
+            menu.figures = carFigures(devRules, menu.testStats, in);
+            figuresFor = menu.testStats;
+            figuresTrack = menu.track;
+            figuresLife = (float)life;
+        }
+        if (menu.runsPage) {
+            menu.runLines.clear();
+            for (const rr::TestRun& r : store.runs()) {
+                if (!menu.runsAllTracks && r.setup.track != ts.file) continue;
+                MenuState::RunLine l;
+                l.id = r.id;
+                l.date = r.date;
+                l.track = r.setup.trackTitle.empty() ? r.setup.track : r.setup.trackTitle;
+                l.algo = r.setup.label;
+                l.stats = r.setup.dev;
+                l.end = r.end;
+                l.compound = r.setup.compound;
+                l.laps = r.setup.laps;
+                l.lapsDone = r.lapsDone;
+                l.fuel = r.setup.fuel;
+                l.best = r.best;
+                l.average = r.average;
+                l.fuelPerLap = r.fuelPerLap;
+                l.wearPerLap = std::max(r.wearPerLap[0], r.wearPerLap[1]);
+                l.telemetry = r.telemetry;
+                l.completed = r.completed;
+                menu.runLines.push_back(l);
+            }
+            if (menu.runsSort == 0)
+                std::stable_sort(menu.runLines.begin(), menu.runLines.end(), [](auto& a, auto& b) { return a.id > b.id; });
+            else
+                std::stable_sort(menu.runLines.begin(), menu.runLines.end(), [](auto& a, auto& b) {
+                    if ((a.best > 0) != (b.best > 0)) return a.best > 0;
+                    return a.best < b.best;
+                });
+        }
+    };
+    auto describeSetup = [&](const rr::TestSetup& su) {
+        static const char* names[] = {"", "Soft", "Medium", "Hard"};
+        char buf[256];
+        std::snprintf(buf, sizeof buf, "%s tyres   %.1f L   %d laps   %s", names[su.compound & 3], su.fuel, su.laps,
+                      su.dev.empty() ? "stock stats" : su.dev.c_str());
+        tv.setup = buf;
+        const auto& lt = liveryTable();
+        const bool have = su.livery >= 0 && su.livery < (int)lt.size();
+        tv.title = (have ? "#" + std::to_string(lt[su.livery].number) + " " : std::string()) + su.label +
+                   (have ? "   " + lt[su.livery].team : std::string());
+        tv.laps = su.laps;
+    };
+    auto testEntry = [&](const rr::TestSetup& su) {
+        rr::EntrySpec e{su.robot, su.params, su.label};
+        const auto& lt = liveryTable();
+        if (su.livery >= 0 && su.livery < (int)lt.size()) e.name = std::to_string(lt[su.livery].number) + " " + su.label;
+        e.dev = su.dev;
+        e.tires = su.compound;
+        e.fuel = su.fuel;
+        return e;
+    };
+    auto testConfig = [&](const rr::TestSetup& su) {
+        rr::RaceConfig t = cfg;
+        t.track = su.track;
+        t.laps = su.laps;
+        t.wearRate = su.wearRate;
+        t.fuelRate = su.fuelRate;
+        t.ambient = su.ambient;
+        t.twoCompounds = 0;
+        t.pitsClosed = true;
+        t.fuelLimit = 0;
+        t.entries = {testEntry(su)};
+        return t;
+    };
+    // Saves the run once: its setup and times always, its telemetry for the newest runs.
+    auto saveTest = [&](const std::string& end, bool completed) {
+        if (testSaved || tv.replay || shotMode || rec.empty() || (rec.laps.empty() && !completed)) return;
+        rec.finish();
+        const int id = store.save(testSetup, rec, end, completed, &err);
+        testSaved = true;
+        if (id) {
+            tv.runId = id;
+            char buf[64];
+            std::snprintf(buf, sizeof buf, "run_%04d", id);
+            tv.message = "Saved as run " + std::to_string(id) + ": " +
+                         (std::filesystem::path(store.dir()) / buf).lexically_normal().string();
+            std::printf("test run saved: %s\n", tv.message.c_str());
+        } else {
+            tv.message = "Could not save the run: " + err;
+        }
+        menu.runsTotal = (int)store.runs().size();
+    };
+    auto startTest = [&]() -> bool {
+        refreshTesting();
+        const TrackStats& ts = menu.stats();
+        const Algorithm& a = menu.algos[std::min(menu.testAlgo, (int)menu.algos.size() - 1)];
+        rr::TestSetup su;
+        su.track = ts.file;
+        su.trackTitle = ts.title;
+        su.robot = a.robot;
+        su.label = a.label;
+        su.params = a.params;
+        su.dev = menu.statRules.format(menu.testStats);
+        su.livery = menu.testLivery;
+        su.laps = menu.laps;
+        su.compound = menu.testTiresUsed();
+        su.fuel = menu.testFuelUsed();
+        su.wearRate = menu.wearRate();
+        su.fuelRate = cfg.fuelRate;
+        su.ambient = cfg.ambient;
+        setCarLiveries({su.livery});
+        auto fresh = makeRace(testConfig(su), paths);
+        if (!fresh) return false;
+        race = std::move(fresh);
+        if (!buildScene()) return false;
+        testSetup = su;
+        rec.begin(*race, 0);
+        rec.update(*race);
+        const int window = tv.window, compare = tv.compareLap, colour = tv.mapColour;
+        const bool dash = tv.dashboard;
+        tv = TestView{};
+        tv.rec = &rec;
+        tv.window = window;
+        tv.compareLap = compare;
+        tv.mapColour = colour;
+        tv.dashboard = dash;
+        describeSetup(su);
+        testSaved = false;
+        simDebt = 0;
+        st.focus = 0;
+        st.followLeader = false;
+        st.paused = false;
+        return true;
+    };
+    // A saved run's telemetry, on a car that stands still: everything comes from the recording.
+    auto startReplay = [&](int id) -> bool {
+        const rr::TestRun* run = store.find(id);
+        if (!run) return false;
+        if (!store.loadTelemetry(*run, rec, &err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return false;
+        }
+        rr::RaceConfig rc = testConfig(run->setup);
+        setCarLiveries({run->setup.livery});
+        auto fresh = makeRace(rc, paths);
+        if (!fresh) {  // the robot is gone: any car will do to show the recording
+            rc.entries[0].robot = "simple";
+            rc.entries[0].params.clear();
+            fresh = makeRace(rc, paths);
+        }
+        if (!fresh) return false;
+        race = std::move(fresh);
+        if (!buildScene()) return false;
+        if (rec.trackLength <= 0) rec.rebuild(race->track().length());
+        tv = TestView{};
+        tv.rec = &rec;
+        tv.replay = true;
+        tv.live = false;
+        tv.runOver = true;
+        tv.runId = id;
+        tv.cursor = 0;
+        describeSetup(run->setup);
+        tv.message = "Run " + std::to_string(id) + ", " + run->date + ": " + run->end;
+        testSaved = true;
+        st.focus = 0;
+        st.followLeader = false;
+        st.paused = true;
+        return true;
+    };
+    // Puts a saved run's setup into the testing menu.
+    auto loadSetup = [&](int id) {
+        const rr::TestRun* run = store.find(id);
+        if (!run) return;
+        const rr::TestSetup& su = run->setup;
+        for (int i = 0; i < (int)menu.tracks.size(); ++i)
+            if (menu.tracks[i].file == su.track && menu.track != i) {
+                menu.track = i;
+                ensureStats();
+                applyMenu();
+            }
+        menu.laps = su.laps;
+        menu.setWearRate(su.wearRate);
+        int found = -1;
+        for (int a = 0; a < (int)menu.algos.size(); ++a)
+            if (menu.algos[a].robot == su.robot && menu.algos[a].params == su.params) found = a;
+        if (found < 0) {
+            menu.algos.push_back({su.label, su.robot, su.params});
+            found = (int)menu.algos.size() - 1;
+        }
+        menu.testAlgo = found;
+        menu.testLivery = std::clamp(su.livery, 0, std::max(0, menu.liveryCount - 1));
+        menu.testTires = su.compound;
+        menu.testFuel = su.fuel;
+        menu.testStats = menu.statRules.parse(su.dev);
+        menu.session = 2;
+        menu.runsPage = false;
+    };
+    // Moves the cursor (and leaves live view).
+    auto scrubTo = [&](double t) {
+        if (rec.empty()) return;
+        tv.cursor = std::clamp(t, 0.0, rec.endTime());
+        tv.live = false;
+    };
+    // The same point of the track on another lap.
+    auto jumpLap = [&](int lap) {
+        if (rec.empty()) return;
+        const rr::TestSample cur = tv.live ? rec.samples.back() : rec.at(tv.cursor);
+        const int last = rec.samples.back().lap;
+        lap = std::clamp(lap, 1, last);
+        int f, e;
+        rec.lapRange(lap, f, e);
+        if (e <= f) return;
+        int k = f;
+        while (k + 1 < e && rec.samples[k + 1].lapDist <= cur.lapDist) ++k;
+        scrubTo(rec.samples[k].t);
+    };
+
+    // --test: the Testing session for the first car of the command line
+    if (cfg.test) {
+        menu.session = 2;
+        if (!menu.carAlgo.empty()) {
+            menu.testAlgo = menu.carAlgo[0];
+            menu.testStats = menu.statRules.parse(menu.algos[menu.testAlgo].stats);
+            if (!cliEntries.empty()) {
+                if (!cliEntries[0].dev.empty()) menu.testStats = menu.statRules.parse(cliEntries[0].dev);
+                menu.testTires = cliEntries[0].tires;
+                menu.testFuel = cliEntries[0].fuel;
+            }
+        }
+        if (!inMenu || cfg.noMenu) {
+            ensureStats();
+            menu.setWearRate(cfg.wearRate);
+            if (startTest()) {
+                inMenu = false;
+                phase = Phase::Test;
+                tv.window = std::clamp(cfg.testView, 0, 3);
+            }
+        }
+    }
+    if (inMenu && cfg.page == "stats") { menu.session = 2; menu.testStatsPage = true; }
+    if (inMenu && cfg.page == "runs") { menu.session = 2; menu.runsPage = true; }
+
     bool quit = false;
     while (!WindowShouldClose() && !quit) {
         const float frameDt = std::min(GetFrameTime(), 0.1f);
@@ -475,7 +748,26 @@ int main(int argc, char** argv) {
         if (inMenu) {
             // ---- race setup
             MenuAction act = updateMenu(menu, menuHits);
+            if (menu.testing()) refreshTesting();
             if (act == MenuAction::Quit) quit = true;
+            if (act == MenuAction::LoadRun) loadSetup(menu.runPick);
+            if (act == MenuAction::ViewRun) {
+                if (startReplay(menu.runPick)) {
+                    inMenu = false;
+                    phase = Phase::Test;
+                } else {
+                    applyMenu();
+                }
+            }
+            if (act == MenuAction::Start && menu.testing()) {
+                act = MenuAction::None;
+                if (startTest()) {
+                    inMenu = false;
+                    phase = Phase::Test;
+                } else {
+                    applyMenu();
+                }
+            }
             if (act == MenuAction::TrackChanged) {
                 ensureStats();
                 if (!applyMenu()) quit = true;
@@ -484,7 +776,7 @@ int main(int argc, char** argv) {
                 if (!applyMenu()) quit = true;
                 inMenu = false;
                 st.paused = false;
-                if (menu.weekend && !quit) {
+                if (menu.weekend() && !quit) {
                     phase = Phase::Quali;
                     weekendEntries = cfg.entries;
                     qualiTime.assign(weekendEntries.size(), 0.0f);
@@ -492,6 +784,151 @@ int main(int argc, char** argv) {
                 }
             }
             renderer->updateCamera(*race, race->order()[0], CAM_CINEMATIC, frameDt);
+        } else if (phase == Phase::Test) {
+            // ---- testing: one car, the timeline and the graphs
+            const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+            const bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+            const bool liveRun = !tv.replay && !tv.runOver;
+            auto rep = [](int key) { return IsKeyPressed(key) || IsKeyPressedRepeat(key); };
+            auto leaveLive = [&]() {
+                if (!tv.live) return;
+                tv.cursor = rec.endTime();
+                tv.live = false;
+                tv.playing = false;
+            };
+            if (IsKeyPressed(KEY_SPACE)) {
+                if (tv.live) st.paused = !st.paused;
+                else {
+                    if (!tv.playing && !liveRun && tv.cursor >= rec.endTime() - 1e-3) tv.cursor = 0;  // from the start again
+                    tv.playing = !tv.playing;
+                    if (tv.playing) st.paused = false;
+                }
+            }
+            const double step = ctrl ? 1.0 / rr::TestRecorder::kRate : shift ? 10.0 : 1.0;
+            if (rep(KEY_LEFT)) { leaveLive(); tv.playing = false; scrubTo(tv.cursor - step); }
+            if (rep(KEY_RIGHT)) {
+                leaveLive();
+                tv.playing = false;
+                scrubTo(tv.cursor + step);
+            }
+            if (rep(KEY_PAGE_UP) && !rec.empty()) { const int lap = tv.live ? rec.samples.back().lap : rec.at(tv.cursor).lap; tv.playing = false; jumpLap(lap - 1); }
+            if (rep(KEY_PAGE_DOWN) && !rec.empty() && !tv.live) { tv.playing = false; jumpLap(rec.at(tv.cursor).lap + 1); }
+            if (IsKeyPressed(KEY_HOME)) { tv.playing = false; scrubTo(0); }
+            if (IsKeyPressed(KEY_END)) {
+                tv.playing = false;
+                if (liveRun) tv.live = true;
+                else scrubTo(rec.endTime());
+            }
+            const int nl = (int)rec.laps.size();
+            if (IsKeyPressed(KEY_LEFT_BRACKET)) tv.compareLap = (tv.compareLap + nl) % (nl + 1);
+            if (IsKeyPressed(KEY_RIGHT_BRACKET)) tv.compareLap = (tv.compareLap + 1) % (nl + 1);
+            if (IsKeyPressed(KEY_G)) tv.dashboard = !tv.dashboard;
+            if (IsKeyPressed(KEY_TAB)) tv.window = (tv.window + (shift ? 3 : 1)) % 4;
+            if (IsKeyPressed(KEY_F) && liveRun) tv.fastForward = !tv.fastForward;
+            if (IsKeyPressed(KEY_M)) {
+                if (tv.window == 3) tv.mapColour = (tv.mapColour + 1) % 3;
+                else st.muted = !st.muted;
+            }
+            if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
+            for (int k = 0; k < CAM_COUNT && k < 7; ++k)
+                if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
+            if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
+            if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
+            if (IsKeyPressed(KEY_P)) st.view.showPaths = !st.view.showPaths;
+            if (IsKeyPressed(KEY_S)) st.view.showSensors = !st.view.showSensors;
+            if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
+            if (IsKeyPressed(KEY_F1)) st.showHelp = !st.showHelp;
+            // mouse: the timeline, graphs, laps and events
+            const Vector2 mp = GetMousePosition();
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                for (const TestHit& h : testHits) {
+                    if (!CheckCollisionPointRec(mp, h.r)) continue;
+                    switch (h.kind) {
+                        case TestHit::Close: tv.window = 0; break;
+                        case TestHit::Tile: tv.window = h.value; break;
+                        case TestHit::Timeline: dragging = true; break;
+                        case TestHit::Event: tv.playing = false; scrubTo(h.a); break;
+                        case TestHit::Lap: {
+                            int f, e;
+                            rec.lapRange(h.value, f, e);
+                            tv.playing = false;
+                            if (e > f) scrubTo(rec.samples[f].t);
+                            break;
+                        }
+                        case TestHit::Dist: {
+                            int f, e;
+                            rec.lapRange(h.value, f, e);
+                            const float d = h.a + (mp.x - h.r.x) / std::max(1.0f, h.r.width) * (h.b - h.a);
+                            int k = f;
+                            while (k + 1 < e && rec.samples[k + 1].lapDist <= d) ++k;
+                            tv.playing = false;
+                            if (e > f) scrubTo(rec.samples[k].t);
+                            break;
+                        }
+                        default: break;
+                    }
+                    break;
+                }
+            }
+            if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) dragging = false;
+            if (dragging) {
+                for (const TestHit& h : testHits)
+                    if (h.kind == TestHit::Timeline) {
+                        tv.playing = false;
+                        scrubTo((mp.x - h.r.x - 6) / std::max(1.0f, h.r.width - 12) * h.b);
+                    }
+            }
+            const float wheel = GetMouseWheelMove();
+            if (wheel != 0 && tv.window == 3) tv.eventTop = std::max(0, tv.eventTop - (int)wheel * 3);
+            if (IsKeyPressed(KEY_R) && !tv.replay) {
+                saveTest("restarted", false);
+                if (!startTest()) quit = true;
+            }
+            if (IsKeyPressed(KEY_ESCAPE) && !shotMode) {
+                if (tv.window) tv.window = 0;
+                else {
+                    saveTest("stopped", false);
+                    inMenu = true;
+                    phase = Phase::Race;
+                    applyMenu();
+                }
+            }
+
+            // ---- simulation (live) or playback (from the cursor)
+            if (phase == Phase::Test && !inMenu) {
+                if (tv.live && liveRun && !st.paused && !shotMode) {
+                    if (tv.fastForward) {
+                        const double until = GetTime() + 0.025;
+                        while (GetTime() < until && !race->isOver())
+                            for (int i = 0; i < 200 && !race->isOver(); ++i) { race->step(); rec.update(*race); }
+                    } else {
+                        simDebt += frameDt * st.timeScale;
+                        long long steps = (long long)(simDebt / race->dt());
+                        simDebt -= steps * race->dt();
+                        for (long long i = 0; i < steps && !race->isOver(); ++i) { race->step(); rec.update(*race); }
+                    }
+                } else if (shotMode && tv.live && liveRun) {
+                    while (!race->isOver() && race->time() < cfg.screenshotAt) { race->step(); rec.update(*race); }
+                    if (cfg.scrubAt >= 0) scrubTo(cfg.scrubAt);
+                }
+                if (tv.playing) {
+                    tv.cursor += frameDt * st.timeScale;
+                    if (tv.cursor >= rec.endTime()) {
+                        tv.playing = false;
+                        if (liveRun) { tv.live = true; st.paused = false; }
+                        else tv.cursor = rec.endTime();
+                    }
+                }
+                if (liveRun && race->isOver()) {
+                    const rr::Car& c = race->cars()[0];
+                    rec.update(*race);
+                    saveTest(c.dnf ? c.dnfReason : c.finished ? "finished" : "time limit", c.finished);
+                    tv.runOver = true;
+                    tv.fastForward = false;
+                    tv.live = false;
+                    tv.cursor = rec.endTime();
+                }
+            }
         } else {
             // ---- input
             const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
@@ -573,15 +1010,43 @@ int main(int argc, char** argv) {
             else if (st.followLeader) st.focus = race->order()[0];
             renderer->updateCamera(*race, st.focus, st.camera, shotMode ? 1.0f / 60 : frameDt);
         }
+        // Testing away from live: show the car as it was at the cursor.
+        const bool testing = phase == Phase::Test && !inMenu;
+        const bool showRecorded = testing && !tv.live && !rec.empty();
+        struct Shown { rr::CarState state; RRControl control; float lateral; bool onTrack; } liveCar{};
+        st.lapClock = st.lastLap = st.bestLap = -1;
+        if (showRecorded) {
+            rr::Car& c = race->carsForReplay()[0];
+            liveCar = {c.state, c.control, c.lateral, c.onTrack};
+            const rr::TestSample x = rec.at(tv.cursor);
+            c.state = x.s;
+            c.control.steer = x.steer;
+            c.control.accel = x.accel;
+            c.control.brake = x.brake;
+            c.control.status[0] = 0;
+            c.control.pit_window[0] = c.control.pit_window[1] = 0;
+            c.lateral = x.lateral;
+            c.onTrack = x.onTrack;
+            st.lapClock = std::max(0.0f, x.lapTime);
+            st.lastLap = x.lap >= 2 && x.lap - 2 < (int)rec.laps.size() ? rec.laps[x.lap - 2].time : 0;
+            st.bestLap = 0;
+            for (int i = 0; i + 1 < x.lap && i < (int)rec.laps.size(); ++i)
+                if (st.bestLap == 0 || rec.laps[i].time < st.bestLap) st.bestLap = rec.laps[i].time;
+        }
+        if (testing) renderer->updateCamera(*race, 0, st.camera, shotMode ? 1.0f / 60 : frameDt);
+
         // engine sound only while racing at (close to) real time
+        const bool liveSound = testing ? (tv.live && !tv.runOver) || tv.playing : true;
         audio.update(*race, renderer->camera, st.focus,
-                     !inMenu && !st.paused && !st.muted && st.timeScale <= 2.0f && !race->cooledDown(), frameDt);
+                     !inMenu && !st.paused && !st.muted && st.timeScale <= 2.0f && !race->cooledDown() && liveSound,
+                     frameDt);
 
         BeginDrawing();
         ClearBackground(BLACK);
         renderer->draw(*race, inMenu ? race->order()[0] : st.focus, st.view);
         if (inMenu) hud->drawMenu(menu, menuHits);
         else if (phase == Phase::QualiDone) hud->drawQualiResults(st);
+        else if (testing) hud->drawTest(*race, st, tv, testHits);
         else hud->draw(*race, st);
         if (shotMode && ++shotFrames == 3) {
             rlDrawRenderBatchActive();
@@ -593,9 +1058,17 @@ int main(int argc, char** argv) {
             break;
         }
         EndDrawing();
+        if (showRecorded) {
+            rr::Car& c = race->carsForReplay()[0];
+            c.state = liveCar.state;
+            c.control = liveCar.control;
+            c.lateral = liveCar.lateral;
+            c.onTrack = liveCar.onTrack;
+        }
     }
 
-    if (!shotMode && race->isOver() && !cfg.quiet) race->printResults(stdout);
+    if (phase == Phase::Test) saveTest("closed", false);
+    if (!shotMode && race->isOver() && !cfg.quiet && phase != Phase::Test) race->printResults(stdout);
     audio.shutdown();
     hud->shutdown();
     renderer->shutdown();

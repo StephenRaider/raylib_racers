@@ -258,7 +258,7 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const ch
     r->pass = rr_param(params, "pass", 1.0f) != 0.0f;
     r->defend = rr_param(params, "defend", 1.0f) != 0.0f;
     r->wearLimit = rr_param(params, "wear", 0.7f);
-    r->usePit = rr_param(params, "pit", 1.0f) != 0.0f && track->pit.has_pit;
+    r->usePit = rr_param(params, "pit", 1.0f) != 0.0f && track->pit.has_pit && !cfg->pits_closed;
     r->push = std::max(1.0f, rr_param(params, "push", 1.2f));
     r->learn = rr_param(params, "learn", 1.0f) != 0.0f;
     r->attack = std::clamp(rr_param(params, "attack", 1.0f), 0.5f, 2.0f);
@@ -325,6 +325,7 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
     if (start) cfg->tire_compound = start;
     // Fuel: the first stint (the start lap plus firstStint laps) and a lap spare.
     const float need = (best.valid ? best.firstStint + 2.0f : (float)laps + 1.0f) * m.fuelPerLap * 1.04f;
+    if (cfg->starting_fuel_set) return;  // the team chose it
     cfg->initial_fuel = std::min(r.car.fuel_capacity, rr_param(params, "fuel", need));
     if (!r.usePit) cfg->initial_fuel = rr_param(params, "fuel", r.car.fuel_capacity);
 }
