@@ -42,6 +42,9 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 | ![Cinematic camera](docs/images/cinematic.jpg) | ![Helicopter camera](docs/images/helicopter.jpg) |
 | ![Orbit camera](docs/images/orbit.jpg) | ![TV camera](docs/images/tv.jpg) |
 | ![Pit stop: the car is held in its box while the crew works](docs/images/pitstop.jpg) | ![Pit lane: speed limiter on, heading for the box](docs/images/pitlane.jpg) |
+| ![Race setup menu](docs/images/menu.jpg) | ![Grid page: livery, algorithm and start tyres per car, and the style stats button](docs/images/grid.jpg) |
+| ![Testing: telemetry dashboard while scrubbing a run](docs/images/testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/testing_track.jpg) |
+| ![Race end: results with the fastest lap](docs/images/results.jpg) | ![Race end: lap chart](docs/images/lapchart.jpg) |
 
 ## Build
 
