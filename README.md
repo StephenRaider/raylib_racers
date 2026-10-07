@@ -293,6 +293,16 @@ p 400 120 16     # wider here
 ...
 ```
 
+Besides Circuit Raylib and the oval there are seven circuits inspired by real
+ones (shape kept, details changed): Autodromo Monzetta (Monza), Ardennes Ring
+(Spa), Silverfield (Silverstone), Magyar Park (Hungaroring), Brands Lane (Brands
+Hatch), Dunes of Zandhoek (Zandvoort) and Kuala Speedway (Sepang).
+`tools/trackgen.py` generates their `.trk` files: Brands Lane from a list of
+rounded corners, the others from centrelines that `tools/tracetrack.py` traced
+from circuit maps (`tools/track_refs/`), then bent, reshaped corner by corner and
+given their own widths and pit lanes. `python3 tools/trackgen.py --plot DIR`
+also draws a 2D map of each.
+
 ## Layout
 
 ```
