@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "car_model.hpp"
+#include "effects.hpp"
 #include "raylib.h"
 #include "race.hpp"
 
@@ -14,6 +15,7 @@ const char* camName(CamMode mode);
 struct ViewOptions {
     bool showPaths = true;    // robots' debug_path polylines
     bool showSensors = false; // focused car's range finders
+    int quality = 2;          // 0 low (plain), 1 medium (no particles), 2 high
 };
 
 Color teamColor(int carIndex);
@@ -28,6 +30,7 @@ public:
 
     void updateCamera(const rr::Race& race, int focus, CamMode mode, float dt);
     void draw(const rr::Race& race, int focus, const ViewOptions& opt);
+    void stepEffects(const rr::Race& race, float dt) { fx_.update(race, dt); }
 
     Camera3D camera{};
 
@@ -41,6 +44,9 @@ private:
     void drawBoxCar(const rr::Car& car, int index);
     void resetCinematic(float clock);
     void drawModel(Model& m, Matrix transform, Color tint);
+    void applyQuality(int quality);
+    Effects fx_;
+    int quality_ = -1;
     void drawBox(Vector3 center, Vector3 size, Color color, Matrix parent);
 
     Shader lit_{};

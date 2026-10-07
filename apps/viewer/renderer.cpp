@@ -78,10 +78,36 @@ float shadowFactor(vec3 n, vec3 l) {
     return s / 9.0 * fade;
 }
 
+uniform float detail;    // 1: procedural surface detail on flat ground (grass patches, asphalt grain)
+uniform float tonemap;   // 1: filmic tone curve
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+
 void main() {
     vec4 tex = texture(texture0, fragTexCoord);
     if (tex.a < alphaCut) discard;
     vec3 base = tex.rgb * colDiffuse.rgb * fragColor.rgb;
+    if (detail > 0.0 && fragNormal.y > 0.9 && fragPosition.y < 0.2) {
+        vec2 wp = fragPosition.xz;
+        float green = base.g - max(base.r, base.b);
+        float grey = 1.0 - clamp((max(base.r, max(base.g, base.b)) - min(base.r, min(base.g, base.b))) * 8.0, 0.0, 1.0);
+        if (green > 0.05) {
+            // mown stripes and patches on the grass
+            float patches = vnoise(wp * 0.05) * 0.6 + vnoise(wp * 0.4) * 0.4;
+            float stripe = step(0.5, fract((wp.x + wp.y) * 0.04)) * 0.06;
+            base *= 0.86 + 0.22 * patches + stripe;
+        } else if (grey > 0.5) {
+            // asphalt grain and darker worn patches
+            float grain = hash(floor(wp * 18.0)) * 0.08 + vnoise(wp * 0.15) * 0.10;
+            base *= 0.84 + grain;
+        }
+    }
     vec3 n = normalize(fragNormal);
     if (!gl_FrontFacing) n = -n;  // two-sided leaf cards
     vec3 l = -normalize(lightDir);
@@ -94,7 +120,15 @@ void main() {
     vec3 col = base * (hemi + lightColor * ndl * (1.0 - sh)) + lightColor * spec * (1.0 - sh);
     float dist = length(viewPos - fragPosition);
     float fog = 1.0 - exp(-pow(dist * fogDensity, 2.0));
-    col = mix(col, fogColor, clamp(fog, 0.0, 1.0));
+    // haze glows warm towards the sun
+    float sunward = pow(max(dot(-v, l), 0.0), 6.0);
+    vec3 haze = mix(fogColor, vec3(1.0, 0.93, 0.80), sunward * 0.6);
+    col = mix(col, haze, clamp(fog, 0.0, 1.0));
+    if (tonemap > 0.0) {
+        col = aces(col * 0.92);
+        float lum = dot(col, vec3(0.299, 0.587, 0.114));
+        col = mix(vec3(lum), col, 1.22);  // a touch more colour after the curve flattens it
+    }
     finalColor = vec4(col, tex.a * colDiffuse.a * fragColor.a);
 }
 )";
@@ -326,6 +360,9 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
         SetShaderValue(*sh, GetShaderLocation(*sh, "specStrength"), &spec, SHADER_UNIFORM_FLOAT);
         int res = shadowRes_;
         SetShaderValue(*sh, GetShaderLocation(*sh, "shadowMapResolution"), &res, SHADER_UNIFORM_INT);
+        float one = 1.0f;
+        SetShaderValue(*sh, GetShaderLocation(*sh, "detail"), &one, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(*sh, GetShaderLocation(*sh, "tonemap"), &one, SHADER_UNIFORM_FLOAT);
     }
     for (Shader* sh : {&litInst_, &depthInst_}) {
         float cut = 0.5f;
@@ -624,6 +661,7 @@ void Renderer::resetCinematic(float clock) {
 }
 
 void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float dt) {
+    fx_.update(race, dt);
     const rr::Car& c = race.cars()[focus];
     Vector3 p = W(c.state.pos);
     Vector3 fwd = Wdir(rr::fromAngle(c.state.yaw));
@@ -893,7 +931,18 @@ void Renderer::drawScene(const rr::Race& race, bool shadowPass) {
     for (size_t i = 0; i < race.cars().size(); ++i) drawCar(race.cars()[i], (int)i);
 }
 
+void Renderer::applyQuality(int quality) {
+    quality_ = quality;
+    fx_.setLevel(quality);
+    const float detail = quality >= 1 ? 1.0f : 0.0f, tone = quality >= 1 ? 1.0f : 0.0f;
+    for (Shader* sh : {&lit_, &litInst_}) {
+        SetShaderValue(*sh, GetShaderLocation(*sh, "detail"), &detail, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(*sh, GetShaderLocation(*sh, "tonemap"), &tone, SHADER_UNIFORM_FLOAT);
+    }
+}
+
 void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
+    if (opt.quality != quality_) applyQuality(opt.quality);
     const rr::Car& fc = race.cars()[focus];
 
     // --- shadow pass: an orthographic sun camera centred between the car and the view target
@@ -933,6 +982,16 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     SetShaderValue(lit_, locFog_, &fogDensity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(litInst_, GetShaderLocation(litInst_, "fogDensity"), &fogDensity, SHADER_UNIFORM_FLOAT);
     DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), kSkyTop, kSkyHorizon);
+    if (quality_ >= 1) {
+        // sun glow in the sky, when the sun is in view
+        Vector3 sunAt = Vector3Add(camera.position, Vector3Scale(kLightDir, -3000.0f));
+        Vector3 fwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        if (Vector3DotProduct(fwd, Vector3Negate(kLightDir)) > 0.2f) {
+            Vector2 sp = GetWorldToScreen(sunAt, camera);
+            DrawCircleGradient((int)sp.x, (int)sp.y, GetScreenHeight() * 0.45f, Color{255, 244, 214, 120}, Color{255, 244, 214, 0});
+            DrawCircleGradient((int)sp.x, (int)sp.y, 38, Color{255, 252, 240, 255}, Color{255, 248, 225, 0});
+        }
+    }
     BeginMode3D(camera);
     SetShaderValueMatrix(lit_, locLightVP_, lightVP_);
     SetShaderValue(lit_, locViewPos_, &camera.position, SHADER_UNIFORM_VEC3);
@@ -946,6 +1005,7 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     rlActiveTextureSlot(0);
     current_ = &lit_;
     drawScene(race, false);
+    fx_.draw(camera.position);
 
     // --- debug overlays (unlit)
     if (opt.showPaths) {

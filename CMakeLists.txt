@@ -107,6 +107,7 @@ if(RR_BUILD_VIEWER)
     apps/viewer/main.cpp
     apps/viewer/renderer.cpp
     apps/viewer/director.cpp
+    apps/viewer/effects.cpp
     apps/viewer/hud.cpp
     apps/viewer/car_model.cpp
     apps/viewer/engine_sound.cpp
