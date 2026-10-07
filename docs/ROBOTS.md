@@ -37,9 +37,11 @@ cc -O2 -shared -fPIC -I path/to/raylib-racers/include tiny.c -o tiny.so
 ./rr_race --car ./tiny.so --car racingline
 ```
 
-Or add it to the project's `CMakeLists.txt` next to the examples with
-`rr_add_robot(tiny bots/tiny/tiny.c)`; it then builds into `build/bots/` and can
-be named as `--car tiny`.
+Or put it in the project as `bots/tiny/tiny.c` and rebuild. Every folder under
+`bots/` (except `common/`) that holds `.c`/`.cpp` files is built as a robot named
+after the folder, with no CMake edits; it lands in `build/bots/` and can be
+named as `--car tiny`. Re-run the build after adding the folder (CMake
+re-scans `bots/` by itself).
 
 ## Lifecycle
 
