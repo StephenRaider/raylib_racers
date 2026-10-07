@@ -16,6 +16,7 @@
 #include "race_audio.hpp"
 #include "race.hpp"
 #include "raylib.h"
+#include "director.hpp"
 #include "renderer.hpp"
 #include "rlgl.h"
 #include "spec.hpp"
@@ -351,6 +352,8 @@ int main(int argc, char** argv) {
 
     // The renderer and HUD are built for one track; a new track gets new ones.
     std::unique_ptr<Renderer> renderer;
+    Director director;
+    const rr::Race* directorRace = nullptr;
     std::unique_ptr<Hud> hud;
     std::string sceneTrack;
     auto buildScene = [&]() -> bool {
@@ -1166,7 +1169,7 @@ int main(int argc, char** argv) {
                 else st.muted = !st.muted;
             }
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
-            for (int k = 0; k < CAM_COUNT && k < 7; ++k)
+            for (int k = 0; k < CAM_COUNT && k < 8; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
@@ -1287,7 +1290,7 @@ int main(int argc, char** argv) {
                 if (IsKeyPressed(KEY_G)) st.showResults = !st.showResults;
             }
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
-            for (int k = 0; k < CAM_COUNT && k < 7; ++k)
+            for (int k = 0; k < CAM_COUNT && k < 8; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
             if (IsKeyPressed(KEY_SPACE)) st.paused = !st.paused;
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
@@ -1391,7 +1394,15 @@ int main(int argc, char** argv) {
             if (!race->isOver() && loggedRace == race.get()) loggedRace = nullptr;
             if (phase != Phase::Race) st.focus = 0;
             else if (st.followLeader) st.focus = race->order()[0];
-            renderer->updateCamera(*race, st.focus, st.camera, shotMode ? 1.0f / 60 : frameDt);
+            CamMode shot = st.camera;
+            if (st.camera == CAM_DIRECTOR && phase == Phase::Race) {
+                if (directorRace != race.get()) director.reset(), directorRace = race.get();
+                director.update(*race, shotMode ? 1.0f / 60 : frameDt);
+                if (director.focus() >= 0) st.focus = director.focus();
+                shot = director.shot();
+                st.directorCaption = director.caption();
+            }
+            renderer->updateCamera(*race, st.focus, shot, shotMode ? 1.0f / 60 : frameDt);
         }
         // Testing away from live: show the car as it was at the cursor.
         const bool testing = phase == Phase::Test && !inMenu;

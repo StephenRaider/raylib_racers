@@ -564,7 +564,7 @@ void Renderer::buildTrack(const rr::Track& tr) {
 // ---------------------------------------------------------------- camera
 
 const char* camName(CamMode mode) {
-    static const char* names[] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW"};
+    static const char* names[] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "DIRECTOR"};
     return mode >= 0 && mode < CAM_COUNT ? names[mode] : "?";
 }
 
@@ -647,20 +647,18 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
         case CAM_CHASE: {
             Vector3 wantPos = Vector3Add(Vector3Subtract(p, Vector3Scale(dir, 8.5f)), {0, 2.7f, 0});
             Vector3 wantTarget = Vector3Add(Vector3Add(p, Vector3Scale(dir, 4.0f)), {0, 0.9f, 0});
+            // Smoothed relative to the car: the camera swings round in corners but
+            // never drops back on the straights, however fast the car or the replay.
+            const Vector3 wantOff = Vector3Subtract(wantPos, p), wantTgt = Vector3Subtract(wantTarget, p);
             if (!chaseInit_) {
-                chasePos_ = wantPos;
-                chaseTarget_ = wantTarget;
+                chasePos_ = wantOff;
+                chaseTarget_ = wantTgt;
                 chaseInit_ = true;
             }
-            float k = 1 - std::exp(-dt * 6.0f), kt = 1 - std::exp(-dt * 14.0f);
-            chasePos_ = Vector3Lerp(chasePos_, wantPos, k);
-            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, kt);
-            // never fall too far behind at high speed
-            Vector3 off = Vector3Subtract(chasePos_, p);
-            float d = Vector3Length(off);
-            if (d > 13.0f) chasePos_ = Vector3Add(p, Vector3Scale(off, 13.0f / d));
-            camera.position = chasePos_;
-            camera.target = chaseTarget_;
+            chasePos_ = Vector3Lerp(chasePos_, wantOff, 1 - std::exp(-dt * 6.0f));
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTgt, 1 - std::exp(-dt * 14.0f));
+            camera.position = Vector3Add(p, chasePos_);
+            camera.target = Vector3Add(p, chaseTarget_);
             camera.fovy = 55.0f + std::min(14.0f, speed * 0.18f);
             break;
         }
@@ -686,16 +684,17 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             Vector3 back = Vector3RotateByAxisAngle(Vector3Negate(smoothDir_), {0, 1, 0}, az);
             Vector3 wantPos = Vector3Add(p, Vector3Add(Vector3Scale(back, d), {0, h, 0}));
             Vector3 wantTarget = Vector3Add(Vector3Add(p, Vector3Scale(smoothDir_, 1.2f)), {0, 0.55f, 0});
+            const Vector3 wantOff = Vector3Subtract(wantPos, p), wantTgt = Vector3Subtract(wantTarget, p);
             if (!chaseInit_) {
-                chasePos_ = wantPos;
-                chaseTarget_ = wantTarget;
+                chasePos_ = wantOff;
+                chaseTarget_ = wantTgt;
                 chaseInit_ = true;
             }
-            chasePos_ = Vector3Lerp(chasePos_, wantPos, 1 - std::exp(-dt * 8.0f));
-            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, 1 - std::exp(-dt * 16.0f));
-            chasePos_.y = std::max(chasePos_.y, 0.35f);
-            camera.position = chasePos_;
-            camera.target = chaseTarget_;
+            chasePos_ = Vector3Lerp(chasePos_, wantOff, 1 - std::exp(-dt * 8.0f));
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTgt, 1 - std::exp(-dt * 16.0f));
+            camera.position = Vector3Add(p, chasePos_);
+            camera.position.y = std::max(camera.position.y, 0.35f);
+            camera.target = Vector3Add(p, chaseTarget_);
             camera.fovy = fov;
             break;
         }
@@ -719,15 +718,16 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             heliYaw_ += dt * 0.035f;
             Vector3 wantPos = Vector3Add(p, {std::cos(heliYaw_) * heliDist_, heliDist_ * 0.62f, std::sin(heliYaw_) * heliDist_});
             Vector3 wantTarget = Vector3Add(p, Vector3Scale(dir, std::min(speed, 60.0f) * 0.25f));
+            const Vector3 wantOff = Vector3Subtract(wantPos, p), wantTgt = Vector3Subtract(wantTarget, p);
             if (!chaseInit_) {
-                chasePos_ = wantPos;
-                chaseTarget_ = wantTarget;
+                chasePos_ = wantOff;
+                chaseTarget_ = wantTgt;
                 chaseInit_ = true;
             }
-            chasePos_ = Vector3Lerp(chasePos_, wantPos, 1 - std::exp(-dt * 1.2f));
-            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, 1 - std::exp(-dt * 5.0f));
-            camera.position = chasePos_;
-            camera.target = chaseTarget_;
+            chasePos_ = Vector3Lerp(chasePos_, wantOff, 1 - std::exp(-dt * 1.2f));
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTgt, 1 - std::exp(-dt * 5.0f));
+            camera.position = Vector3Add(p, chasePos_);
+            camera.target = Vector3Add(p, chaseTarget_);
             camera.fovy = 34.0f;
             break;
         }
@@ -735,13 +735,14 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             // Straight down with north (the minimap's up) at the top of the screen.
             topHeight_ = std::clamp(topHeight_ * (1.0f - wheel * 0.1f), 30.0f, 600.0f);
             Vector3 wantTarget = Vector3Add(p, Vector3Scale(dir, std::min(speed, 60.0f) * 0.3f));
+            const Vector3 wantTgt = Vector3Subtract(wantTarget, p);
             if (!chaseInit_) {
-                chaseTarget_ = wantTarget;
+                chaseTarget_ = wantTgt;
                 chaseInit_ = true;
             }
-            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTarget, 1 - std::exp(-dt * 4.0f));
-            camera.target = chaseTarget_;
-            camera.position = Vector3Add(chaseTarget_, {0, topHeight_, 0});
+            chaseTarget_ = Vector3Lerp(chaseTarget_, wantTgt, 1 - std::exp(-dt * 4.0f));
+            camera.target = Vector3Add(p, chaseTarget_);
+            camera.position = Vector3Add(camera.target, {0, topHeight_, 0});
             camera.up = {0, 0, -1};
             camera.fovy = 45.0f;
             break;

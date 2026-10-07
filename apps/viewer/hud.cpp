@@ -97,6 +97,8 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         if (st.qualifying)
             std::snprintf(buf, sizeof buf, "%s  RUN %d / %d   %s CAM   Enter: skip run   Shift+Enter: skip the rest%s",
                           st.sessionTitle.c_str(), st.qualiRun, st.qualiRuns, camName(st.camera), st.muted ? "   SOUND OFF" : "");
+        else if (st.camera == CAM_DIRECTOR)
+            std::snprintf(buf, sizeof buf, "DIRECTOR CAM   %s%s", st.directorCaption.c_str(), st.muted ? "   SOUND OFF" : "");
         else
             std::snprintf(buf, sizeof buf, "%s CAM   %s%s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED",
                           st.muted ? "   SOUND OFF" : "");
@@ -417,7 +419,7 @@ void Hud::drawHelp() {
     const char* lines[] = {
         "Tab / Right   next car",       "Left          previous car",       "1-9           focus car by position",
         "L             follow the leader", "C / Shift+C   next / prev camera",
-        "F2-F8         follow, cinematic, TV, helicopter, top down, orbit, overview",
+        "F2-F9         follow, cinematic, TV, heli, top, orbit, overview, director",
         "Mouse drag    orbit (orbit cam)", "Wheel         zoom (orbit, heli, top)",
         "Space         pause",          "+ / -         simulation speed",  "N             single step (paused)",
         "R             restart race",   "P             robot paths",       "S             range finders",
