@@ -81,11 +81,15 @@ void Hud::panel(Rectangle r, float alpha) {
 }
 
 void Hud::draw(const rr::Race& race, const HudState& st) {
+    // the race-end windows take the screen; G hides them to show the tower again
+    const bool results = race.isOver() && st.showResults && !st.qualifying;
     if (st.showHud) {
         if (st.qualifying) drawQualiTower(race, st);
-        else drawTower(race, st);
-        drawMinimap(race, st);
-        drawCarPanel(race, st);
+        else if (!results) drawTower(race, st);
+        if (!results) {
+            drawMinimap(race, st);
+            drawCarPanel(race, st);
+        }
         const char* hint = "F1 help   Tab next car   L follow leader   C camera   M sound   Space pause   +/- speed   Esc menu";
         text(hint, 18, GetScreenHeight() - 30.0f, 16, Fade(kText, 0.75f));
         // camera and focus mode, top centre
@@ -106,7 +110,7 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         float w = width(p, 44, true);
         text(p, (GetScreenWidth() - w) / 2, GetScreenHeight() * 0.2f, 44, kText, true);
     }
-    if (race.isOver()) drawResults(race, st.logPath);
+    if (results) drawResults(race, st);
     if (st.showHelp) drawHelp();
 }
 
@@ -390,43 +394,6 @@ void Hud::drawHelp() {
     for (int i = 0; i < n; ++i) text(lines[i], x + 24, y + 58 + i * 24.0f, 17, kText, false, true);
 }
 
-void Hud::drawResults(const rr::Race& race, const std::string& logPath) {
-    const auto& order = race.order();
-    const float rowH = order.size() > 14 ? 27.0f : 30.0f;
-    float w = 560, h = 90 + rowH * order.size() + (logPath.empty() ? 0 : 24);
-    float x = (GetScreenWidth() - w) / 2, y = std::max(10.0f, std::min(GetScreenHeight() * 0.22f, (GetScreenHeight() - h) / 2));
-    panel({x, y, w, h}, 0.82f);
-    text("RESULTS", x + 24, y + 18, 26, kAccent, true);
-    textRight("R to restart", x + w - 24, y + 24, 15, kDim);
-    char buf[64];
-    float ry = y + 62;
-    const rr::Car& win = race.cars()[order[0]];
-    for (size_t p = 0; p < order.size(); ++p) {
-        const rr::Car& c = race.cars()[order[p]];
-        std::snprintf(buf, sizeof buf, "%zu", p + 1);
-        textRight(buf, x + 50, ry, 20, kText, true);
-        DrawRectangle((int)x + 60, (int)ry + 2, 5, 20, teamColor(order[p]));
-        text(c.name.c_str(), x + 76, ry, 20, kText);
-        std::string t;
-        if (c.finished) t = p == 0 ? lapTime(c.raceTime()) : "+" + lapTime(c.raceTime() - win.raceTime());
-        else t = c.dnf ? "DNF" : "not finished";
-        if (c.penalties > 0) {
-            std::snprintf(buf, sizeof buf, "pen +%.0fs", c.penaltyTime);
-            textRight(buf, x + w - 290, ry + 3, 14, Color{240, 110, 70, 255}, false, true);
-        }
-        textRight(t.c_str(), x + w - 170, ry + 1, 18, kText, false, true);
-        std::snprintf(buf, sizeof buf, "best %s", lapTime(c.bestLap).c_str());
-        textRight(buf, x + w - 24, ry + 2, 15, kDim, false, true);
-        ry += rowH;
-    }
-    if (!logPath.empty()) {
-        const std::string line = "Race log: " + logPath;
-        float size = 13;
-        while (size > 9 && width(line.c_str(), size) > w - 48) size -= 1;
-        text(line.c_str(), x + 24, ry + 4, size, kDim);
-    }
-}
-
 void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
     hits.clear();
     if (m.gridPage) {
@@ -528,7 +495,7 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
             case Row::Stats:
                 label = "Team stats";
                 std::snprintf(val, sizeof val, "Edit");
-                std::snprintf(note, sizeof note, "%d points per team over %d stats; each driver's style sets its team's",
+                std::snprintf(note, sizeof note, "%d points per team over %d stats; the Grid page's style button applies a style's",
                               m.statRules.budget, (int)m.statRules.keys.size());
                 break;
             case Row::Session:
@@ -700,6 +667,16 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
     DrawRectangleRounded(b, 0.25f, 8, kAccent);
     text("DONE", b.x + (b.width - width("DONE", 20, true)) / 2, b.y + 9, 20, Color{20, 20, 24, 255}, true);
     hits.push_back({b.x, b.y, b.width, b.height, 99, 0});
+    // Style button: teams take the stats of the algorithm they changed last.
+    const int pending = m.stylesPending();
+    Rectangle sb = {x + 28, y + h - 58, 300, 40};
+    DrawRectangleRounded(sb, 0.25f, 8, pending ? Fade(kAccent, 0.25f) : Fade(WHITE, 0.06f));
+    DrawRectangleRoundedLinesEx(sb, 0.25f, 8, 1.5f, pending ? kAccent : Fade(kDim, 0.5f));
+    text("APPLY STYLE STATS (A)", sb.x + 16, sb.y + 10, 17, pending ? kText : kDim, true);
+    if (pending) std::snprintf(buf, sizeof buf, "%d team%s changed algorithm: stats not applied yet", pending, pending == 1 ? "" : "s");
+    else std::snprintf(buf, sizeof buf, "changing an algorithm keeps the team's stats");
+    text(buf, sb.x + sb.width + 16, sb.y + 12, 15, pending ? kAccent : kDim);
+    hits.push_back({sb.x, sb.y, sb.width, sb.height, 94, 0});
     const char* help = "Up/Down car    Tab livery / algorithm / tyres    Left/Right change (a livery in use swaps)    Enter done";
     text(help, x + 28, y + h - 86, 15, kDim);
 }
@@ -718,7 +695,7 @@ void Hud::drawTeamsPage(const MenuState& m, std::vector<MenuHit>& hits) {
     text("Team stats", x + 28, y + 44, 32, kText, true);
     char buf[128];
     char about[256];
-    std::snprintf(about, sizeof about, "Each stat 0-%d (%d is the stock car), %d points per team. Changing a driver's style on the Grid page resets the team to that style's stats.",
+    std::snprintf(about, sizeof about, "Each stat 0-%d (%d is the stock car), %d points per team. The Grid page's style button gives a team the stats of the algorithm it changed last.",
                   r.max, r.neutral, r.budget);
     text(about, x + 28, y + 86, 14, kDim);
     const float hy = y + 116;

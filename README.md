@@ -101,11 +101,23 @@ algorithm choose). **Weekend** mode runs qualifying first:
 each car goes out alone for an out lap and two flying laps, and the fastest
 lap takes pole. `Enter` skips the current run, `Shift+Enter` the rest of
 qualifying. `--no-menu` skips the menu. The default grid runs the four
-`racingline` variants in turn: standard, aggressive (`grip=0.85,brake=0.75,
-push=1.3,attack=1.4,heat=15`: brakes later, learns closer to the limit, follows
-closer, goes for gaps sooner and runs its tyres hotter), safe (`grip=0.75`) and
-steady (`grip=0.7,brake=0.6,heat=0`);
-`gapfollow` and `simple` are still on the Grid page.
+racingline family in turn, four robots that share one driving code:
+**John Fone** (`racingline`, the standard), **Spongebob** (`spongebob`:
+`grip=0.85,brake=0.75,push=1.3,attack=1.4,heat=15`, brakes later, learns closer
+to the limit, follows closer, goes for gaps sooner and runs its tyres hotter),
+**Dave** (`dave`: `grip=0.75`, careful) and **Granny Doris** (`granny`:
+`grip=0.7,brake=0.6,heat=0`, smooth and easy on the tyres). Each is its own
+library in `bots/`, so `--car spongebob` works in `rr_race` too, and params
+given at race time still override its defaults. `gapfollow` and `simple` are
+still on the Grid page.
+
+When the race ends the results come up in six windows (`[` `]`, PgUp/PgDn or
+click the tabs; `G` hides them): **Results** with the fastest lap highlighted,
+**Positions** (grid against finish, places gained and lost), **Lap chart**
+(every car's position lap by lap, the selected car on top), **Lap times**
+(best, average, spread and every lap as a bar), **Strategy** (tyre stints and
+stops, repair-only stops in red) and **Incidents** (contacts, penalties, blue
+flags, repairs, damage and the hardest contacts).
 
 **Testing** (the Session row's third choice) puts one car on track alone, with
 no pit stops, to collect data and train a single algorithm. The setup page
@@ -170,6 +182,8 @@ To grab a frame without a window manager (e.g. under `xvfb-run`):
 `rr_viewer --screenshot shot.png --at 30 --camera 1`. With `--test` the
 viewer opens on the Testing session (and `--no-menu` or `--at` starts the
 run); `--test-view N` and `--scrub T` pick the testing window and moment.
+`--results N` picks the race-end window (1-6) and `--page grid|stats|runs`
+opens a menu page.
 
 ## Car physics
 
@@ -237,9 +251,10 @@ few tenths a lap, the gap between neighbouring top teams.
 spec reaches its robot through `RRCarSpec`, so planners adapt to it.
 
 In the viewer the **Team stats** page edits each team's stats. Teammates share
-them, and choosing a driving style for a driver on the Grid page gives the team
-that style's stats (the aggressive racingline wants tyre management, the steady
-one spends on speed). **Drivers per team** races one or two cars per team.
+them. Changing a driver's algorithm leaves the stats alone; the Grid page's
+**Apply style stats** button (`A`) gives each team whose algorithm changed the
+stats that suit the algorithm it changed last (Spongebob wants tyre management,
+Granny Doris spends on speed). **Drivers per team** races one or two cars per team.
 
 ```sh
 ./build/rr_race --laps 25 --car racingline --dev "top_speed=8,handling=8,tire_management=2,pit_stop=2" \

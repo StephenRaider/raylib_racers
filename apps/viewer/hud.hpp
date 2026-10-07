@@ -37,6 +37,9 @@ struct HudState {
     std::string logPath;          // where the finished race's log was saved
     // Testing replays: what the car panel shows instead of the live clock (< 0 = live).
     float lapClock = -1, lastLap = -1, bestLap = -1;
+    // Race-end screen: which window, and whether it is shown at all (G).
+    int resultsWindow = 0;
+    bool showResults = true;
 };
 
 // The testing screen: what is shown and where the cursor is.
@@ -80,6 +83,8 @@ public:
     void drawTest(const rr::Race& race, const HudState& st, const TestView& tv, std::vector<TestHit>& hits);
     // Car index of the timing-tower row under `p` (screen pixels), -1 if none.
     int towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const;
+    // Race-end window tab under `p`, -1 if none.
+    int resultsTabAt(Vector2 p) const;
     // The race setup screen; fills `hits` with its clickable areas.
     void drawMenu(const MenuState& m, std::vector<MenuHit>& hits);
 
@@ -124,7 +129,8 @@ public:
     // Qualifying classification between the sessions, with the race start prompt.
     void drawQualiResults(const HudState& st);
 private:
-    void drawResults(const rr::Race& race, const std::string& logPath);
+    void drawResults(const rr::Race& race, const HudState& st);
+    std::vector<Rectangle> resultTabs_;  // the race-end window tabs, as last drawn
 
     Font regular_{}, bold_{}, mono_{};
     bool ownFonts_ = false;

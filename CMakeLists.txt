@@ -99,7 +99,7 @@ if(RR_BUILD_VIEWER)
     apps/viewer/engine_sound.cpp
     apps/viewer/race_audio.cpp
     apps/viewer/menu.cpp
-    apps/viewer/hud_test.cpp
+    apps/viewer/hud_test.cpp apps/viewer/hud_results.cpp
     apps/viewer/test_figures.cpp
     apps/viewer/liveries.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
@@ -116,6 +116,8 @@ if(RR_BUILD_BOTS)
   add_test(NAME race_smoke
     COMMAND rr_race --laps 1 --quiet --car simple --car gapfollow --car racingline
             --json ${CMAKE_BINARY_DIR}/smoke_results.json)
+  # The racingline family: Dave, Spongebob and Granny Doris are racingline with other defaults.
+  add_test(NAME race_named_bots COMMAND rr_race --laps 1 --quiet --car dave --car spongebob --car granny)
   add_test(NAME race_oval COMMAND rr_race --track oval --laps 1 --quiet --car racingline)
   # Fast tyre wear forces a stop: the racingline robot must pit and finish.
   add_test(NAME race_test_log COMMAND rr_race --laps 2 --quiet --car racingline --no-pits --fuel 8 --tires soft

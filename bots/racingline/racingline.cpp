@@ -55,7 +55,21 @@
 #include "rr/robot_api.h"
 #include "strategist.hpp"
 
+// Other robots are this one with their own defaults: bots/dave/dave.cpp sets
+// RL_NAME and RL_DEFAULTS and includes this file. Params given at race time
+// still win over RL_DEFAULTS.
+#ifndef RL_NAME
+#define RL_NAME "racingline"
+#endif
+#ifndef RL_DEFAULTS
+#define RL_DEFAULTS ""
+#endif
+
 namespace {
+
+float param(const char* params, const char* key, float def) {
+    return rr_param(params, key, rr_param(RL_DEFAULTS, key, def));
+}
 
 constexpr float kCoastDist = 250.0f;  // m of lift and coast before a braking zone at full fuel saving
 
@@ -250,20 +264,20 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg);
 void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const char* params, RRRobotConfig* cfg) {
     auto* r = new RacingLine();
     r->index = index;
-    r->grip = rr_param(params, "grip", 0.8f);
-    r->brakeScale = rr_param(params, "brake", 0.7f);
-    r->margin = rr_param(params, "margin", 1.3f);
-    r->look = rr_param(params, "look", 1.0f);
-    r->yawGain = rr_param(params, "yawgain", 0.06f);
-    r->pass = rr_param(params, "pass", 1.0f) != 0.0f;
-    r->defend = rr_param(params, "defend", 1.0f) != 0.0f;
-    r->wearLimit = rr_param(params, "wear", 0.7f);
-    r->usePit = rr_param(params, "pit", 1.0f) != 0.0f && track->pit.has_pit && !cfg->pits_closed;
-    r->push = std::max(1.0f, rr_param(params, "push", 1.2f));
-    r->learn = rr_param(params, "learn", 1.0f) != 0.0f;
-    r->attack = std::clamp(rr_param(params, "attack", 1.0f), 0.5f, 2.0f);
-    r->heat = rr_param(params, "heat", 5.0f);
-    r->fuelSaveParam = r->fuelSave = std::clamp(rr_param(params, "save", 0.0f), 0.0f, 1.0f);
+    r->grip = param(params, "grip", 0.8f);
+    r->brakeScale = param(params, "brake", 0.7f);
+    r->margin = param(params, "margin", 1.3f);
+    r->look = param(params, "look", 1.0f);
+    r->yawGain = param(params, "yawgain", 0.06f);
+    r->pass = param(params, "pass", 1.0f) != 0.0f;
+    r->defend = param(params, "defend", 1.0f) != 0.0f;
+    r->wearLimit = param(params, "wear", 0.7f);
+    r->usePit = param(params, "pit", 1.0f) != 0.0f && track->pit.has_pit && !cfg->pits_closed;
+    r->push = std::max(1.0f, param(params, "push", 1.2f));
+    r->learn = param(params, "learn", 1.0f) != 0.0f;
+    r->attack = std::clamp(param(params, "attack", 1.0f), 0.5f, 2.0f);
+    r->heat = param(params, "heat", 5.0f);
+    r->fuelSaveParam = r->fuelSave = std::clamp(param(params, "save", 0.0f), 0.0f, 1.0f);
     r->car = *car;
     r->pit = track->pit;
     r->tp.assign(track->points, track->points + track->num_points);
@@ -311,7 +325,7 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
         m.pitLoss = std::max(5.0f, pitT - r.spanNormal) + 4.0f;
     }
     const int laps = cfg->race_laps > 0 ? cfg->race_laps : 10;
-    const int tires = (int)rr_param(params, "tires", 0.0f);
+    const int tires = (int)param(params, "tires", 0.0f);
     int start = tires >= RR_TIRE_SOFT && tires <= RR_TIRE_HARD ? tires : 0;
     if (cfg->starting_compound_set) start = cfg->tire_compound;  // the team's choice: plan around it
     strat::Plan best;
@@ -326,8 +340,8 @@ void initStrategy(RacingLine& r, const char* params, RRRobotConfig* cfg) {
     // Fuel: the first stint (the start lap plus firstStint laps) and a lap spare.
     const float need = (best.valid ? best.firstStint + 2.0f : (float)laps + 1.0f) * m.fuelPerLap * 1.04f;
     if (cfg->starting_fuel_set) return;  // the team chose it
-    cfg->initial_fuel = std::min(r.car.fuel_capacity, rr_param(params, "fuel", need));
-    if (!r.usePit) cfg->initial_fuel = rr_param(params, "fuel", r.car.fuel_capacity);
+    cfg->initial_fuel = std::min(r.car.fuel_capacity, param(params, "fuel", need));
+    if (!r.usePit) cfg->initial_fuel = param(params, "fuel", r.car.fuel_capacity);
 }
 
 // What the timing screen says about the cars around us, in seconds.
@@ -999,7 +1013,7 @@ int debugPath(void* self, float* xy, int maxPoints) {
     return count;
 }
 
-const RRRobotApi kApi = {RR_ABI_VERSION, "racingline", "Raylib Racers examples", create, drive, destroy, debugPath};
+const RRRobotApi kApi = {RR_ABI_VERSION, RL_NAME, "Raylib Racers examples", create, drive, destroy, debugPath};
 
 }  // namespace
 

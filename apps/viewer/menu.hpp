@@ -56,8 +56,9 @@ struct MenuState {
     int liveryCount = 1;
 
     // Teams: the livery slots of each team (a team's first driver, then its
-    // second), and the team's stats. Teammates share them; picking a style for a
-    // driver gives the team that style's stats.
+    // second), and the team's stats. Teammates share them. Picking an algorithm
+    // leaves the stats alone; the grid page's style button gives each team the
+    // stats of the algorithm it changed most recently.
     std::vector<std::vector<int>> teamSlots;
     std::vector<int> slotTeam;  // livery slot -> team
     StatRules statRules;
@@ -76,8 +77,13 @@ struct MenuState {
     std::vector<int> raceTeams() const;  // teams with a car in the race, in grid order
     // Lays the grid out for teams x drivers: each team's first drivers, then the second ones.
     void layoutGrid();
-    // A driver's style changed: the team takes that style's stats.
+    // The team takes the stats that suit this car's algorithm.
     void styleChanged(int car);
+    // Per team: the car whose algorithm changed last (-1 = none since the last apply).
+    std::vector<int> styleCar;
+    void algoChanged(int car);
+    int stylesPending() const;
+    void applyStyles();  // the style button
 
     static constexpr int kTyreLives[] = {3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 0};  // 0 = no wear
     static constexpr int kNumTyreLives = sizeof(kTyreLives) / sizeof(kTyreLives[0]);
