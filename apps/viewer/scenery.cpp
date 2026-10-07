@@ -529,9 +529,6 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         t.centre = Vector3Scale(Vector3Add(lo, hi), 0.5f);
         t.radius = Vector3Distance(lo, hi) * 0.5f + 25.0f;
     }
-    size_t n = 0;
-    for (const TreeTile& t : treeTiles_) n += t.parts[TP_TRUNK].size() + t.parts[TP_BLOB].size();
-    TraceLog(LOG_WARNING, "SCENERY: %d props, %d tree tiles, %d trunks+blobs", (int)props_.size(), (int)treeTiles_.size(), (int)n);
 }
 
 void Renderer::drawProps(bool shadowPass) {
