@@ -60,6 +60,10 @@ private:
 
     Texture2D texAsphalt_{}, texGrass_{}, texChecker_{}, texWhite_{};
     Model mdlAsphalt_{}, mdlMarkings_{}, mdlWalls_{}, mdlGround_{}, mdlStart_{};
+    Texture2D texMask_{};   // grass mask: black on the track
+    Model mdlShell_{};      // unit plane for the grass shells
+    Vector4 maskRect_{};
+    void drawGrass();
     Model mdlCube_{}, mdlWheel_{}, mdlSphere_{}, mdlCone_{}, mdlTrunk_{}, mdlPyramid_{};
     CarModel carModel_;
 

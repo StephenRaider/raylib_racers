@@ -3,6 +3,7 @@
 #include "liveries.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -79,7 +80,9 @@ float shadowFactor(vec3 n, vec3 l) {
 }
 
 uniform float detail;    // 1: procedural surface detail on flat ground (grass patches, asphalt grain)
-uniform float tonemap;   // 1: filmic tone curve
+uniform float shellFrac; // > 0: a grass shell this far up the blades (0..1)
+uniform sampler2D grassMask;  // white where grass grows (not on the track)
+uniform vec4 maskRect;   // x, y origin and size of the mask in sim metres
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -87,10 +90,21 @@ float vnoise(vec2 p) {
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
 }
-vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
-
 void main() {
-    vec4 tex = texture(texture0, fragTexCoord);
+    if (shellFrac > 0.0) {
+        // shell grass: each shell keeps the blades that reach this high
+        vec2 sim = vec2(fragPosition.x, -fragPosition.z);
+        if (texture(grassMask, (sim - maskRect.xy) / maskRect.z).r < 0.5) discard;
+        vec2 g = fragPosition.xz * 20.0;
+        vec2 cell = floor(g);
+        float clump = vnoise(fragPosition.xz * 0.35) * 0.7 + vnoise(fragPosition.xz * 2.1) * 0.3;
+        float h = hash(cell) * (0.35 + 0.9 * clump);
+        vec2 f = fract(g) - 0.5 + (vec2(hash(cell + 1.7), hash(cell + 5.3)) - 0.5) * 0.3 * shellFrac;
+        if (h < shellFrac || length(f) > 0.5 * (1.0 - shellFrac * 0.8)) discard;
+        float d = length(viewPos.xz - fragPosition.xz);
+        if (hash(cell + 3.1) > clamp((75.0 - d) / 30.0, 0.0, 1.0)) discard;
+    }
+    vec4 tex = texture(texture0, shellFrac > 0.0 ? fragPosition.xz / 14.0 : fragTexCoord);
     if (tex.a < alphaCut) discard;
     vec3 base = tex.rgb * colDiffuse.rgb * fragColor.rgb;
     if (detail > 0.0 && fragNormal.y > 0.9 && fragPosition.y < 0.2) {
@@ -98,10 +112,11 @@ void main() {
         float green = base.g - max(base.r, base.b);
         float grey = 1.0 - clamp((max(base.r, max(base.g, base.b)) - min(base.r, min(base.g, base.b))) * 8.0, 0.0, 1.0);
         if (green > 0.05) {
-            // mown stripes and patches on the grass
-            float patches = vnoise(wp * 0.05) * 0.6 + vnoise(wp * 0.4) * 0.4;
-            float stripe = step(0.5, fract((wp.x + wp.y) * 0.04)) * 0.06;
-            base *= 0.86 + 0.22 * patches + stripe;
+            // uneven grass: big dry and lush patches, smaller clumps
+            float big = vnoise(wp * 0.02), mid = vnoise(wp * 0.11), small = vnoise(wp * 0.9);
+            base *= 0.78 + 0.28 * mid + 0.14 * small;
+            base = mix(base, base * vec3(1.25, 1.05, 0.7), smoothstep(0.55, 0.85, big) * 0.6);  // dry, yellower
+            if (shellFrac > 0.0) base *= 0.55 + 0.6 * shellFrac;  // darker at the roots
         } else if (grey > 0.5) {
             // asphalt grain and darker worn patches
             float grain = hash(floor(wp * 18.0)) * 0.08 + vnoise(wp * 0.15) * 0.10;
@@ -124,11 +139,7 @@ void main() {
     float sunward = pow(max(dot(-v, l), 0.0), 6.0);
     vec3 haze = mix(fogColor, vec3(1.0, 0.93, 0.80), sunward * 0.6);
     col = mix(col, haze, clamp(fog, 0.0, 1.0));
-    if (tonemap > 0.0) {
-        col = aces(col * 0.92);
-        float lum = dot(col, vec3(0.299, 0.587, 0.114));
-        col = mix(vec3(lum), col, 1.22);  // a touch more colour after the curve flattens it
-    }
+
     finalColor = vec4(col, tex.a * colDiffuse.a * fragColor.a);
 }
 )";
@@ -362,7 +373,6 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
         SetShaderValue(*sh, GetShaderLocation(*sh, "shadowMapResolution"), &res, SHADER_UNIFORM_INT);
         float one = 1.0f;
         SetShaderValue(*sh, GetShaderLocation(*sh, "detail"), &one, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(*sh, GetShaderLocation(*sh, "tonemap"), &one, SHADER_UNIFORM_FLOAT);
     }
     for (Shader* sh : {&litInst_, &depthInst_}) {
         float cut = 0.5f;
@@ -596,6 +606,35 @@ void Renderer::buildTrack(const rr::Track& tr) {
     mdlWalls_ = modelFrom(walls.build(), texWhite_);
     mdlGround_ = modelFrom(ground.build(), texGrass_);
     mdlStart_ = modelFrom(start.build(), texChecker_);
+
+    // Where grass grows: everywhere but the track, its kerbs and the pit lane.
+    {
+        const int N = 2048;
+        const float size = std::max(maxX - minX, maxY - minY) + 600.0f;
+        maskRect_ = {minX - 300.0f, minY - 300.0f, size, 0};
+        Image img = GenImageColor(N, N, WHITE);
+        auto px = [&](Vec2 p) { return Vector2{(p.x - maskRect_.x) / size * N, (p.y - maskRect_.y) / size * N}; };
+        for (int i = 0; i < n; ++i) {
+            const auto& a = tr.at(i);
+            const auto& b = tr.at(i + 1);
+            float la = a.halfWidth + 2.0f, lb = b.halfWidth + 2.0f, ra = la, rb = lb;
+            if (tr.hasPit() && tr.inPitLane(a.s)) {
+                float& wa = tr.pit().side > 0 ? la : ra;
+                float& wb = tr.pit().side > 0 ? lb : rb;
+                wa = a.halfWidth + rr::Track::kPitBarrier + 1.0f;
+                wb = b.halfWidth + rr::Track::kPitBarrier + 1.0f;
+            }
+            Vector2 p0 = px(a.p + a.n * la), p1 = px(b.p + b.n * lb), p2 = px(b.p - b.n * rb), p3 = px(a.p - a.n * ra);
+            for (auto t : {std::array<Vector2, 3>{p0, p1, p2}, std::array<Vector2, 3>{p0, p2, p3},
+                           std::array<Vector2, 3>{p0, p2, p1}, std::array<Vector2, 3>{p0, p3, p2}})
+                ImageDrawTriangle(&img, t[0], t[1], t[2], BLACK);
+        }
+        texMask_ = LoadTextureFromImage(img);
+        SetTextureFilter(texMask_, TEXTURE_FILTER_BILINEAR);
+        UnloadImage(img);
+        mdlShell_ = LoadModelFromMesh(GenMeshPlane(1, 1, 1, 1));
+        mdlShell_.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texGrass_;
+    }
 }
 
 // ---------------------------------------------------------------- camera
@@ -931,14 +970,45 @@ void Renderer::drawScene(const rr::Race& race, bool shadowPass) {
     for (size_t i = 0; i < race.cars().size(); ++i) drawCar(race.cars()[i], (int)i);
 }
 
+// Shell grass: stacked see-through copies of the ground round the camera, each
+// keeping only the blades that reach its height. Costs fill rate, not geometry.
+void Renderer::drawGrass() {
+    const int shells = quality_ >= 2 ? 12 : 6;
+    const float height = 0.16f, size = 160.0f;
+    Vector3 c = {std::round(camera.position.x / 2) * 2, 0, std::round(camera.position.z / 2) * 2};
+    // centre the patch a little ahead of the camera, where it is looking
+    Vector3 fwd = Vector3Subtract(camera.target, camera.position);
+    fwd.y = 0;
+    if (Vector3Length(fwd) > 0.01f) c = Vector3Add(c, Vector3Scale(Vector3Normalize(fwd), 40.0f));
+    c.x = std::round(c.x / 2) * 2;
+    c.z = std::round(c.z / 2) * 2;
+    if (camera.position.y > 60.0f) return;  // too high to see blades
+    const int maskLoc = GetShaderLocation(lit_, "grassMask"), rectLoc = GetShaderLocation(lit_, "maskRect"),
+              fracLoc = GetShaderLocation(lit_, "shellFrac");
+    rlEnableShader(lit_.id);
+    int slot = 11;
+    rlActiveTextureSlot(slot);
+    rlEnableTexture(texMask_.id);
+    rlSetUniform(maskLoc, &slot, SHADER_UNIFORM_INT, 1);
+    rlActiveTextureSlot(0);
+    SetShaderValue(lit_, rectLoc, &maskRect_, SHADER_UNIFORM_VEC4);
+    rlDisableBackfaceCulling();
+    for (int k = 1; k <= shells; ++k) {
+        float f = (float)k / shells;
+        SetShaderValue(lit_, fracLoc, &f, SHADER_UNIFORM_FLOAT);
+        Matrix M = MatrixMultiply(MatrixScale(size, 1, size), MatrixTranslate(c.x, -0.08f + height * f, c.z));
+        drawModel(mdlShell_, M, WHITE);
+    }
+    float zero = 0;
+    SetShaderValue(lit_, fracLoc, &zero, SHADER_UNIFORM_FLOAT);
+    rlEnableBackfaceCulling();
+}
+
 void Renderer::applyQuality(int quality) {
     quality_ = quality;
     fx_.setLevel(quality);
-    const float detail = quality >= 1 ? 1.0f : 0.0f, tone = quality >= 1 ? 1.0f : 0.0f;
-    for (Shader* sh : {&lit_, &litInst_}) {
-        SetShaderValue(*sh, GetShaderLocation(*sh, "detail"), &detail, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(*sh, GetShaderLocation(*sh, "tonemap"), &tone, SHADER_UNIFORM_FLOAT);
-    }
+    const float detail = quality >= 1 ? 1.0f : 0.0f;
+    for (Shader* sh : {&lit_, &litInst_}) SetShaderValue(*sh, GetShaderLocation(*sh, "detail"), &detail, SHADER_UNIFORM_FLOAT);
 }
 
 void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
@@ -1005,6 +1075,7 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     rlActiveTextureSlot(0);
     current_ = &lit_;
     drawScene(race, false);
+    if (quality_ >= 1) drawGrass();
     fx_.draw(camera.position);
 
     // --- debug overlays (unlit)

@@ -46,7 +46,7 @@ void Effects::emit(int kind, Vector3 p, Vector3 v, int count) {
         q.kind = kind;
         if (kind == 0) {  // tyre smoke: drifts up, grows, fades
             q.v = Vector3Add(Vector3Scale(v, 0.25f), {rnd() - 0.5f, 0.6f + rnd() * 0.6f, rnd() - 0.5f});
-            q.life = 1.6f + rnd(); q.size = 0.5f; q.col = {225, 225, 228, 110};
+            q.life = 1.4f + rnd(); q.size = 0.4f; q.col = {230, 230, 232, 55};
         } else if (kind == 1) {  // dust and grass thrown up
             q.v = Vector3Add(Vector3Scale(v, 0.35f), {2 * rnd() - 1, 1.0f + rnd() * 1.5f, 2 * rnd() - 1});
             q.life = 1.2f + rnd(); q.size = 0.6f; q.col = {150, 128, 92, 120};
