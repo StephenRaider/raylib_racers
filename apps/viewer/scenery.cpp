@@ -198,7 +198,8 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     };
     auto tree = [&](TreeKind k, Vec2 p, float scale, Color leaf) { treeAt(k, W(p), scale, leaf); };
     auto mound = [&](Vec2 c, float rx, float h, float rz, float yaw, Color col) {
-        add(P_MOUND, W(c, -h * 0.25f), {rx, h * 1.25f, rz}, yaw, col);
+        // the cap of a sunken, flattened sphere: a gentle hill `h` high, about 0.66 rx across
+        add(P_MOUND, W(c, -h * 3.0f), {rx, h * 4.0f, rz}, yaw, col);
         feet.push_back({c, std::max(rx, rz) * 0.85f});
     };
     // Trees where noise says forest: a jittered grid `spacing` apart over the land around the
@@ -267,7 +268,9 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
     for (float s = 0; s < tr.length(); s += 250) {
         const auto& sm = sample(s);
         const float side = outside(s);
-        tvSpots_.push_back(W(sm.p + sm.n * (side * (sm.halfWidth + edge + 8.0f)), 6.0f));
+        const Vec2 q = sm.p + sm.n * (side * (sm.halfWidth + edge + 8.0f));
+        tvSpots_.push_back(W(q, 6.0f));
+        feet.push_back({q, 6});  // keep hills and buildings off the cameras
     }
 
     // ---- grandstands: the main straight (away from the pits), then the outside of the slow corners
@@ -349,7 +352,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 14; ++k) {
             const Vec2 p = randomPoint(450);
             if (!free(p, 140, 120)) continue;
-            mound(p, R(140, 260), R(40, 80), R(140, 260), R(0, PI), {44, 86, 46, 255});
+            mound(p, R(210, 390), R(40, 80), R(210, 390), R(0, PI), {44, 86, 46, 255});
         }
         for (int k = 0; k < 8; ++k) {
             const Vec2 p = randomPoint(100);
@@ -362,11 +365,14 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         // trees on the hills too
         for (const Prop& m : std::vector<Prop>(props_)) {
             if (m.kind != P_MOUND) continue;
-            for (int k = 0; k < 30; ++k) {
-                const float a = R(0, 2 * PI), d = R(0, 0.8f);
+            const int n = (int)(m.size.x * m.size.z * 0.4f / 110.0f);  // as dense as the woods
+            const Matrix rot = MatrixRotateY(m.yaw);
+            for (int k = 0; k < n; ++k) {
+                const float a = R(0, 2 * PI), d = 0.62f * std::sqrt(R(0, 1));
                 const float x = std::cos(a) * d, z = std::sin(a) * d;
                 const float h = m.pos.y + m.size.y * std::sqrt(std::max(0.0f, 1 - d * d)) - 0.5f;
-                treeAt(CONIFER, {m.pos.x + x * m.size.x, h, m.pos.z + z * m.size.z}, R(1.3f, 2.0f), mix(pine, leafDark, R(0, 1)));
+                const Vector3 off = Vector3Transform({x * m.size.x, 0, z * m.size.z}, rot);
+                treeAt(CONIFER, {m.pos.x + off.x, h, m.pos.z + off.z}, R(1.3f, 2.0f), mix(pine, leafDark, R(0, 1)));
             }
         }
     } else if (th == "airfield") {
@@ -420,7 +426,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 18; ++k) {
             const Vec2 p = randomPoint(500);
             if (!free(p, 120, 100)) continue;
-            mound(p, R(120, 240), R(25, 55), R(120, 240), R(0, PI), {110, 124, 58, 255});
+            mound(p, R(180, 360), R(25, 55), R(180, 360), R(0, PI), {110, 124, 58, 255});
         }
         for (int k = 0; k < 14; ++k) {
             const Vec2 p = randomPoint(150);
@@ -444,7 +450,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 40; ++k) {
             const Vec2 p = randomPoint(260);
             if (!free(p, 30, 30) || p.x < seaX + 150) continue;
-            mound(p, R(40, 110), R(8, 22), R(40, 110), R(0, PI), mix({214, 196, 146, 255}, {176, 168, 110, 255}, R(0, 1)));
+            mound(p, R(60, 160), R(8, 22), R(60, 160), R(0, PI), mix({140, 132, 90, 255}, {118, 116, 76, 255}, R(0, 1)));
         }
         woods(10, 0.55f, 140, 6, 300, [&](Vec2 p, float r) {
             if (p.x < seaX + 150) return;
@@ -482,7 +488,7 @@ void Renderer::buildScenery(const rr::Track& tr, unsigned seed) {
         for (int k = 0; k < 10; ++k) {
             const Vec2 p = randomPoint(400);
             if (!free(p, 110, 90)) continue;
-            mound(p, R(110, 200), R(25, 45), R(110, 200), R(0, PI), {70, 112, 52, 255});
+            mound(p, R(165, 300), R(25, 45), R(165, 300), R(0, PI), {70, 112, 52, 255});
         }
         for (int k = 0; k < 5; ++k) {
             const Vec2 p = randomPoint(160);
