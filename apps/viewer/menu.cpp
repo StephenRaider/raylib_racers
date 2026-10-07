@@ -479,7 +479,7 @@ void select(MenuState& m, MenuState::Row row, MenuAction& act) {
         case Row::TestStats: m.testStatsPage = true; break;
         case Row::TestRuns: m.runsPage = true; break;
         case Row::TestFuel: m.testFuel = 0; break;  // back to automatic
-        default: act = m.champ() ? MenuAction::NewSeason : MenuAction::Start; break;
+        default: break;  // only the Start button starts the race
     }
 }
 
@@ -677,7 +677,7 @@ MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits) {
         const int k = m.rowIndex(m.row);
         if (k >= 0 && k < (int)m.calendar.size()) m.calendar.erase(m.calendar.begin() + k);
     }
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE)) {
+    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) {
         const Row r = rows[m.row];
         if (r == Row::Season) {
             m.seasonPick = m.rowIndex(m.row);
@@ -685,7 +685,7 @@ MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits) {
         } else if (isButtonRow(r) || r == Row::ChampQuali || r == Row::Start) {
             select(m, r, act);
         } else if (r != Row::Round) {
-            act = m.champ() ? MenuAction::NewSeason : MenuAction::Start;
+            act = m.champ() ? MenuAction::NewSeason : MenuAction::Start;  // Enter is the start shortcut; Space is not
         }
     }
     if (IsKeyPressed(KEY_ESCAPE)) act = MenuAction::Quit;
