@@ -28,7 +28,7 @@
       ]
     },
     {
-      "team": "Papaya Racing",
+      "team": "Papaya Masterkard F1",
       "livery": "liveries/papaya.png",
       "cars": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "team": "Silver Arrow GP",
+      "team": "Pertona Silver Arrows",
       "livery": "liveries/silver_teal.png",
       "cars": [
         {
@@ -60,13 +60,13 @@
         }
       ],
       "number_colour": [
-        20,
-        20,
-        22
+        180,
+        254,
+        43
       ]
     },
     {
-      "team": "Midnight Energy",
+      "team": "Red Ox Racing",
       "livery": "liveries/midnight.png",
       "cars": [
         {

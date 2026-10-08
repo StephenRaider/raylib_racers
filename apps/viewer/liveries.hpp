@@ -8,7 +8,7 @@
 // number), read from assets/cars/f1_gearari/teams.json, and which slot each car in
 // the race wears. teamColor() and the car model both go through this.
 struct CarLivery {
-    std::string team;   // e.g. "Papaya Racing"
+    std::string team;   // e.g. "Papaya Masterkard F1"
     std::string key;    // base livery name, e.g. "papaya"
     std::string file;   // full path of the numbered livery PNG
     int number = 0;
